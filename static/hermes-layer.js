@@ -135,6 +135,262 @@
     }
   }
 
+  function agentApiUrl(path){
+    return new URL(path.replace(/^\/+/, ''), currentAgentBase()).href;
+  }
+
+  function agentApiJson(path, init){
+    if (!originalFetch) return Promise.reject(new Error('Fetch unavailable.'));
+    var opts = addLayerCsrf(path, init || {});
+    opts.credentials = 'include';
+    if (opts.body && !(opts.body instanceof FormData)) {
+      var headers = new Headers(opts.headers || {});
+      if (!headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
+      opts.headers = headers;
+    }
+    return originalFetch(agentApiUrl(path), opts).then(function(response){
+      return response.text().then(function(text){
+        var data = text ? JSON.parse(text) : null;
+        if (!response.ok) {
+          throw new Error((data && (data.message || data.error)) || ('HTTP ' + response.status));
+        }
+        return data;
+      });
+    });
+  }
+
+  function formatNumber(value){
+    var number = Number(value || 0);
+    try { return new Intl.NumberFormat('en-US').format(number); } catch (_) { return String(number); }
+  }
+
+  function formatPercent(value){
+    var number = Number(value || 0);
+    try { return new Intl.NumberFormat('en-US', { maximumFractionDigits: 1 }).format(number) + '%'; } catch (_) { return String(number) + '%'; }
+  }
+
+  function formatBytes(value){
+    var bytes = Number(value || 0);
+    if (!bytes) return '0 B';
+    var units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    var index = 0;
+    while (bytes >= 1024 && index < units.length - 1) {
+      bytes = bytes / 1024;
+      index += 1;
+    }
+    return (index === 0 ? String(bytes) : bytes.toFixed(bytes >= 10 ? 1 : 2)) + ' ' + units[index];
+  }
+
+  function formatDate(value){
+    if (!value) return '-';
+    try { return new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value)); } catch (_) { return String(value); }
+  }
+
+  function metric(label, value){
+    return '<div class="hl-surface-metric"><div class="hl-surface-label">' + escapeHtml(label) + '</div><div class="hl-surface-value">' + escapeHtml(value) + '</div></div>';
+  }
+
+  function statusItem(label, value, ok){
+    return '<div class="hl-surface-status-item"><span>' + escapeHtml(label) + '</span><strong class="' + (ok ? 'is-ok' : 'is-warn') + '">' + escapeHtml(value) + '</strong></div>';
+  }
+
+  function ensureSurfaceRoot(){
+    var root = document.getElementById('hermes-layer-surface-root');
+    if (root) return root;
+    root = document.createElement('div');
+    root.id = 'hermes-layer-surface-root';
+    document.body.appendChild(root);
+    return root;
+  }
+
+  function closeSurface(){
+    var root = document.getElementById('hermes-layer-surface-root');
+    if (root) root.innerHTML = '';
+  }
+
+  function surfaceShell(title, subtitle, body, busy){
+    var root = ensureSurfaceRoot();
+    root.innerHTML =
+      '<div class="hl-surface-backdrop" data-hl-surface-close></div>' +
+      '<section class="hl-surface" role="dialog" aria-modal="true" aria-label="' + escapeHtml(title) + '">' +
+        '<header class="hl-surface-head">' +
+          '<div><h2>' + escapeHtml(title) + '</h2><p>' + escapeHtml(subtitle) + '</p></div>' +
+          '<button class="hl-surface-close" type="button" data-hl-surface-close aria-label="Close">x</button>' +
+        '</header>' +
+        (busy ? '<div class="hl-surface-progress"></div>' : '') +
+        '<div class="hl-surface-body">' + body + '</div>' +
+      '</section>';
+    root.querySelectorAll('[data-hl-surface-close]').forEach(function(button){
+      button.addEventListener('click', closeSurface);
+    });
+    return root;
+  }
+
+  function openOptimizationSurface(){
+    surfaceShell(
+      'Context Optimization',
+      'Headroom runs inside this isolated workspace and reports redacted aggregate metrics.',
+      '<div class="hl-surface-muted">Loading...</div>',
+      true
+    );
+    Promise.all([
+      agentApiJson('api/hermes-layer/headroom'),
+      agentApiJson('api/hermes-layer/headroom/stats')
+    ]).then(function(results){
+      renderOptimizationSurface(results[0].headroom, results[1].stats, false);
+    }).catch(function(error){
+      surfaceShell(
+        'Context Optimization',
+        'Headroom runs inside this isolated workspace and reports redacted aggregate metrics.',
+        '<div class="hl-surface-alert">' + escapeHtml(error.message || 'Context optimization failed.') + '</div>',
+        false
+      );
+    });
+  }
+
+  function openBackupsSurface(){
+    surfaceShell(
+      'Backups',
+      'Full workspace backups include Hermes/WebUI data, Headroom data, manifest and checksums.',
+      '<div class="hl-surface-muted">Loading...</div>',
+      true
+    );
+    agentApiJson('api/hermes-layer/backups').then(function(result){
+      renderBackupsSurface(result.backups || [], false, '');
+    }).catch(function(error){
+      surfaceShell(
+        'Backups',
+        'Full workspace backups include Hermes/WebUI data, Headroom data, manifest and checksums.',
+        '<div class="hl-surface-alert">' + escapeHtml(error.message || 'Backups failed.') + '</div>',
+        false
+      );
+    });
+  }
+
+  function renderBackupsSurface(backups, busy, message){
+    var rows = (backups || []).map(function(backup){
+      var restorable = backup.status === 'completed' || backup.status === 'restored';
+      return '<div class="hl-backup-row">' +
+        '<div class="hl-backup-main">' +
+          '<strong>' + escapeHtml(backup.id) + '</strong>' +
+          '<span>Created ' + escapeHtml(formatDate(backup.createdAt)) + '</span>' +
+        '</div>' +
+        '<div class="hl-backup-meta">' +
+          '<span>' + escapeHtml(backup.status || 'unknown') + '</span>' +
+          '<span>' + escapeHtml(formatBytes(backup.sizeBytes)) + '</span>' +
+          '<button class="hl-surface-button" type="button" data-hl-restore-backup="' + escapeHtml(backup.id) + '" ' + (restorable || busy ? '' : 'disabled') + '>Restore</button>' +
+        '</div>' +
+      '</div>';
+    }).join('');
+    var body =
+      '<div class="hl-surface-row">' +
+        '<div><h3>Full Workspace Backup</h3><p>Archives restore the Hermes/WebUI volume and the Headroom volume together after checksum verification.</p></div>' +
+        '<button class="hl-surface-button is-primary" type="button" data-hl-create-backup ' + (busy ? 'disabled' : '') + '>Create backup</button>' +
+      '</div>' +
+      (message ? '<div class="hl-surface-alert">' + escapeHtml(message) + '</div>' : '') +
+      '<div class="hl-surface-metrics">' +
+        metric('Backups', formatNumber((backups || []).length)) +
+        metric('Completed', formatNumber((backups || []).filter(function(item){ return item.status === 'completed' || item.status === 'restored'; }).length)) +
+        metric('Latest size', formatBytes((backups || [])[0] && (backups || [])[0].sizeBytes)) +
+        metric('Format', 'Full workspace') +
+      '</div>' +
+      '<div class="hl-backup-list">' + (rows || '<div class="hl-surface-muted">No backups yet.</div>') + '</div>';
+    var root = surfaceShell(
+      'Backups',
+      'Full workspace backups include Hermes/WebUI data, Headroom data, manifest and checksums.',
+      body,
+      busy
+    );
+    var createButton = root.querySelector('[data-hl-create-backup]');
+    if (createButton) {
+      createButton.addEventListener('click', function(){
+        renderBackupsSurface(backups, true, 'Creating a full workspace backup...');
+        agentApiJson('api/hermes-layer/backups', { method: 'POST' }).then(function(){
+          return agentApiJson('api/hermes-layer/backups');
+        }).then(function(result){
+          renderBackupsSurface(result.backups || [], false, 'Backup completed.');
+        }).catch(function(error){
+          renderBackupsSurface(backups, false, error.message || 'Backup failed.');
+        });
+      });
+    }
+    root.querySelectorAll('[data-hl-restore-backup]').forEach(function(button){
+      button.addEventListener('click', function(){
+        var backupId = button.getAttribute('data-hl-restore-backup') || '';
+        if (!backupId) return;
+        if (!window.confirm('Restore this workspace from backup ' + backupId + '? Current runtime data will be replaced.')) return;
+        renderBackupsSurface(backups, true, 'Restoring backup...');
+        agentApiJson('api/hermes-layer/restore', {
+          method: 'POST',
+          body: JSON.stringify({ backupId: backupId })
+        }).then(function(){
+          return agentApiJson('api/hermes-layer/backups');
+        }).then(function(result){
+          renderBackupsSurface(result.backups || [], false, 'Restore completed.');
+        }).catch(function(error){
+          renderBackupsSurface(backups, false, error.message || 'Restore failed.');
+        });
+      });
+    });
+  }
+
+  function renderOptimizationSurface(state, stats, saving){
+    var runtime = state && state.runtime ? state.runtime : {};
+    var settings = state && state.settings ? state.settings : {};
+    var summary = stats && stats.summary ? stats.summary : {};
+    var enabled = settings.enabled !== false;
+    var history = stats && stats.history ? JSON.stringify(stats.history, null, 2) : '';
+    if (history.length > 1600) history = history.slice(0, 1597) + '...';
+    var body =
+      '<div class="hl-surface-row">' +
+        '<div><h3>Context optimization</h3><p>Uses Headroom through the Hermes context engine and MCP server.</p></div>' +
+        '<label class="hl-switch"><input type="checkbox" data-hl-headroom-toggle ' + (enabled ? 'checked' : '') + ' ' + (saving ? 'disabled' : '') + '><span></span><b>' + (enabled ? 'Enabled' : 'Disabled') + '</b></label>' +
+      '</div>' +
+      '<div class="hl-surface-status-grid">' +
+        statusItem('Runtime', runtime.status || 'unknown', ['healthy', 'disabled'].indexOf(runtime.status || '') >= 0) +
+        statusItem('Sidecar', runtime.sidecarHealthy ? 'healthy' : 'unhealthy', !!runtime.sidecarHealthy) +
+        statusItem('Plugin', runtime.pluginConfigured ? 'configured' : 'missing', !!runtime.pluginConfigured) +
+        statusItem('MCP', runtime.mcpConfigured ? 'configured' : 'missing', !!runtime.mcpConfigured) +
+      '</div>' +
+      (runtime.message ? '<div class="hl-surface-alert">' + escapeHtml(runtime.message) + '</div>' : '') +
+      '<div class="hl-surface-metrics">' +
+        metric('Requests', formatNumber(summary.requests)) +
+        metric('Compressed', formatNumber(summary.requestsCompressed)) +
+        metric('Tokens saved', formatNumber(summary.tokensSaved)) +
+        metric('Savings', formatPercent(summary.savingsPercent)) +
+        metric('Tokens before', formatNumber(summary.tokensBefore)) +
+        metric('Tokens after', formatNumber(summary.tokensAfter)) +
+        metric('Cache hits', formatNumber(summary.cacheHits)) +
+        metric('CCR entries', formatNumber(summary.ccrEntries)) +
+      '</div>' +
+      (history ? '<h3>History</h3><pre class="hl-surface-history">' + escapeHtml(history) + '</pre>' : '');
+    var root = surfaceShell(
+      'Context Optimization',
+      'Headroom runs inside this isolated workspace and reports redacted aggregate metrics.',
+      body,
+      saving
+    );
+    var toggle = root.querySelector('[data-hl-headroom-toggle]');
+    if (toggle) {
+      toggle.addEventListener('change', function(event){
+        var next = !!event.target.checked;
+        renderOptimizationSurface(state, stats, true);
+        agentApiJson('api/hermes-layer/headroom', {
+          method: 'PATCH',
+          body: JSON.stringify({ enabled: next })
+        }).then(function(result){
+          return agentApiJson('api/hermes-layer/headroom/stats').then(function(statsResult){
+            renderOptimizationSurface(result.headroom, statsResult.stats, false);
+          });
+        }).catch(function(error){
+          renderOptimizationSurface(state, stats, false);
+          var bodyNode = document.querySelector('.hl-surface-body');
+          if (bodyNode) bodyNode.insertAdjacentHTML('afterbegin', '<div class="hl-surface-alert">' + escapeHtml(error.message || 'Context optimization update failed.') + '</div>');
+        });
+      });
+    }
+  }
+
   function setOpen(root, open){
     var menu = root.querySelector('[data-hl-account-menu]');
     var button = root.querySelector('[data-hl-account-button]');
@@ -150,6 +406,9 @@
     var name = account.name || account.email || 'Account';
     var email = account.email || '';
     var linkMarkup = links.map(function(link){
+      if (link.action) {
+        return '<button class="hl-account-link" type="button" data-hl-action="' + escapeHtml(link.action) + '" role="menuitem">' + escapeHtml(link.label) + '</button>';
+      }
       return '<a class="hl-account-link" href="' + escapeHtml(link.href) + '" role="menuitem">' + escapeHtml(link.label) + '</a>';
     }).join('');
 
@@ -188,6 +447,14 @@
         });
       });
     }
+    root.querySelectorAll('[data-hl-action]').forEach(function(action){
+      action.addEventListener('click', function(event){
+        event.preventDefault();
+        setOpen(root, false);
+        if (action.getAttribute('data-hl-action') === 'optimization') openOptimizationSurface();
+        if (action.getAttribute('data-hl-action') === 'backups') openBackupsSurface();
+      });
+    });
   }
 
   function initAccountMenu(){
