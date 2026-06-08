@@ -553,7 +553,8 @@
         '<div class="hl-backup-meta">' +
           '<span>' + escapeHtml(backup.status || 'unknown') + '</span>' +
           '<span>' + escapeHtml(formatBytes(backup.sizeBytes)) + '</span>' +
-          '<button class="hl-surface-button" type="button" data-hl-restore-backup="' + escapeHtml(backup.id) + '" ' + (restorable || busy ? '' : 'disabled') + '>Restore</button>' +
+          '<button class="hl-surface-button" type="button" data-hl-download-backup="' + escapeHtml(backup.id) + '" ' + (restorable && !busy ? '' : 'disabled') + '>Download</button>' +
+          '<button class="hl-surface-button" type="button" data-hl-restore-backup="' + escapeHtml(backup.id) + '" ' + (restorable && !busy ? '' : 'disabled') + '>Restore</button>' +
         '</div>' +
       '</div>';
     }).join('');
@@ -589,6 +590,13 @@
         });
       });
     }
+    root.querySelectorAll('[data-hl-download-backup]').forEach(function(button){
+      button.addEventListener('click', function(){
+        var backupId = button.getAttribute('data-hl-download-backup') || '';
+        if (!backupId) return;
+        window.location.assign(agentApiUrl('api/hermes-layer/backups/' + encodeURIComponent(backupId) + '/download'));
+      });
+    });
     root.querySelectorAll('[data-hl-restore-backup]').forEach(function(button){
       button.addEventListener('click', function(){
         var backupId = button.getAttribute('data-hl-restore-backup') || '';
