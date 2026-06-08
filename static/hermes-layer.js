@@ -658,8 +658,18 @@
     var settings = state && state.settings ? state.settings : {};
     var summary = stats && stats.summary ? stats.summary : {};
     var enabled = settings.enabled !== false;
-    var history = stats && stats.history ? JSON.stringify(stats.history, null, 2) : '';
-    if (history.length > 1600) history = history.slice(0, 1597) + '...';
+    var history = stats && stats.history ? stats.history : null;
+    var lifetime = history && history.lifetime ? history.lifetime : {};
+    var currentSession = history && history.currentSession ? history.currentSession : {};
+    var periods = history && Array.isArray(history.periods) ? history.periods : [];
+    var periodRows = periods.slice(0, 14).map(function(period){
+      return '<tr>' +
+        '<td>' + escapeHtml(period.date || '-') + '</td>' +
+        '<td>' + escapeHtml(formatNumber(period.requests)) + '</td>' +
+        '<td>' + escapeHtml(formatNumber(period.tokensSaved)) + '</td>' +
+        '<td>' + escapeHtml(formatPercent(period.savingsPercent)) + '</td>' +
+      '</tr>';
+    }).join('');
     var body =
       '<div class="hl-surface-row">' +
         '<div><h3>Context optimization</h3><p>Uses Headroom through the Hermes context engine and MCP server.</p></div>' +
@@ -682,7 +692,14 @@
         metric('Cache hits', formatNumber(summary.cacheHits)) +
         metric('CCR entries', formatNumber(summary.ccrEntries)) +
       '</div>' +
-      (history ? '<h3>History</h3><pre class="hl-surface-history">' + escapeHtml(history) + '</pre>' : '');
+      (history ? '<h3>History</h3>' +
+        '<div class="hl-surface-metrics">' +
+          metric('Lifetime requests', formatNumber(lifetime.requests)) +
+          metric('Lifetime saved', formatNumber(lifetime.tokensSaved)) +
+          metric('Session saved', formatNumber(currentSession.tokensSaved)) +
+          metric('Generated', history.generatedAt || '-') +
+        '</div>' +
+        (periodRows ? '<table class="hl-surface-table"><thead><tr><th>Date</th><th>Requests</th><th>Tokens saved</th><th>Savings</th></tr></thead><tbody>' + periodRows + '</tbody></table>' : '<div class="hl-surface-muted">No history periods yet.</div>') : '');
     var root = surfaceShell(
       'Context Optimization',
       'Headroom runs inside this isolated workspace and reports redacted aggregate metrics.',

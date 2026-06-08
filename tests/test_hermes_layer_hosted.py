@@ -75,6 +75,15 @@ def test_hermes_layer_bridge_owns_account_billing_backups_support_and_headroom_r
         assert f"'{action}'" in HERMES_LAYER_JS or f'"{action}"' in HERMES_LAYER_JS
 
 
+def test_headroom_history_is_rendered_as_redacted_metrics_not_raw_json():
+    assert "JSON.stringify(stats.history" not in HERMES_LAYER_JS
+    assert "hl-surface-table" in HERMES_LAYER_JS
+    assert "Lifetime saved" in HERMES_LAYER_JS
+    assert "Session saved" in HERMES_LAYER_JS
+    assert "storage_path" not in HERMES_LAYER_JS
+    assert ".hl-surface-table" in (STATIC / "style.css").read_text(encoding="utf-8")
+
+
 def test_bridge_rebases_fetch_and_eventsource_to_the_agent_gateway():
     assert "window.__hermesLayerHosted = true;" in HERMES_LAYER_JS
     assert "window.fetch" in HERMES_LAYER_JS
