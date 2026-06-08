@@ -68,6 +68,7 @@ def test_hermes_layer_bridge_owns_account_billing_backups_support_and_headroom_r
         "api/hermes-layer/billing/portal",
         "api/hermes-layer/billing/sync-checkout",
         "api/hermes-layer/backups",
+        "api/hermes-layer/backups/import",
         "api/hermes-layer/restore",
         "api/hermes-layer/support/tickets",
         "api/hermes-layer/headroom",
@@ -81,6 +82,8 @@ def test_hermes_layer_bridge_owns_account_billing_backups_support_and_headroom_r
     assert "data-hl-action" in HERMES_LAYER_JS
     assert "data-hl-account-logout" in HERMES_LAYER_JS
     assert "data-hl-workspace-action" in HERMES_LAYER_JS
+    assert "data-hl-import-backup-button" in HERMES_LAYER_JS
+    assert "shouldSetJsonContentType" in HERMES_LAYER_JS
     assert "Agent status" in HERMES_LAYER_JS
     for action in required_actions:
         assert f"'{action}'" in HERMES_LAYER_JS or f'"{action}"' in HERMES_LAYER_JS

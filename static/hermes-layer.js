@@ -180,7 +180,7 @@
     if (!originalFetch) return Promise.reject(new Error('Fetch unavailable.'));
     var opts = addLayerCsrf(path, init || {});
     opts.credentials = 'include';
-    if (opts.body && !(opts.body instanceof FormData)) {
+    if (shouldSetJsonContentType(opts.body)) {
       var headers = new Headers(opts.headers || {});
       if (!headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
       opts.headers = headers;
@@ -194,6 +194,15 @@
         return data;
       });
     });
+  }
+
+  function shouldSetJsonContentType(body){
+    if (!body) return false;
+    if (typeof FormData !== 'undefined' && body instanceof FormData) return false;
+    if (typeof Blob !== 'undefined' && body instanceof Blob) return false;
+    if (typeof ArrayBuffer !== 'undefined' && body instanceof ArrayBuffer) return false;
+    if (typeof ArrayBuffer !== 'undefined' && ArrayBuffer.isView && ArrayBuffer.isView(body)) return false;
+    return true;
   }
 
   function formatNumber(value){
@@ -668,10 +677,12 @@
   function renderBackupsSurface(backups, busy, message){
     var rows = (backups || []).map(function(backup){
       var restorable = backup.status === 'completed' || backup.status === 'restored';
+      var trigger = backup.trigger || 'manual';
+      var triggerLabel = trigger === 'scheduled' ? 'Automatic backup' : (trigger === 'imported' ? 'Imported backup' : 'Manual backup');
       return '<div class="hl-backup-row">' +
         '<div class="hl-backup-main">' +
           '<strong>' + escapeHtml(backup.id) + '</strong>' +
-          '<span>' + escapeHtml((backup.trigger || 'manual') === 'scheduled' ? 'Automatic backup' : 'Manual backup') + ' - Created ' + escapeHtml(formatDate(backup.createdAt)) + '</span>' +
+          '<span>' + escapeHtml(triggerLabel) + ' - Created ' + escapeHtml(formatDate(backup.createdAt)) + '</span>' +
         '</div>' +
         '<div class="hl-backup-meta">' +
           '<span>' + escapeHtml(backup.status || 'unknown') + '</span>' +
@@ -683,8 +694,12 @@
     }).join('');
     var body =
       '<div class="hl-surface-row">' +
-        '<div><h3>Full Workspace Backup</h3><p>Archives restore the Hermes/WebUI volume and the Headroom volume together after checksum verification.</p></div>' +
-        '<button class="hl-surface-button is-primary" type="button" data-hl-create-backup ' + (busy ? 'disabled' : '') + '>Create backup</button>' +
+        '<div><h3>Full Workspace Backup</h3><p>Archives restore the Hermes/WebUI volume and the Headroom volume together after checksum verification. Exports can be imported back into this workspace.</p></div>' +
+        '<div class="hl-surface-actions">' +
+          '<button class="hl-surface-button" type="button" data-hl-import-backup-button ' + (busy ? 'disabled' : '') + '>Import backup</button>' +
+          '<button class="hl-surface-button is-primary" type="button" data-hl-create-backup ' + (busy ? 'disabled' : '') + '>Create backup</button>' +
+          '<input type="file" data-hl-import-backup hidden accept=".tar.gz,application/gzip,application/x-gzip">' +
+        '</div>' +
       '</div>' +
       (message ? '<div class="hl-surface-alert">' + escapeHtml(message) + '</div>' : '') +
       '<div class="hl-surface-metrics">' +
@@ -710,6 +725,30 @@
           renderBackupsSurface(result.backups || [], false, 'Backup completed.');
         }).catch(function(error){
           renderBackupsSurface(backups, false, error.message || 'Backup failed.');
+        });
+      });
+    }
+    var importButton = root.querySelector('[data-hl-import-backup-button]');
+    var importInput = root.querySelector('[data-hl-import-backup]');
+    if (importButton && importInput) {
+      importButton.addEventListener('click', function(){
+        importInput.value = '';
+        importInput.click();
+      });
+      importInput.addEventListener('change', function(){
+        var file = importInput.files && importInput.files[0];
+        if (!file) return;
+        renderBackupsSurface(backups, true, 'Importing full workspace backup...');
+        agentApiJson('api/hermes-layer/backups/import', {
+          method: 'POST',
+          headers: { 'Content-Type': file.type || 'application/gzip' },
+          body: file
+        }).then(function(){
+          return agentApiJson('api/hermes-layer/backups');
+        }).then(function(result){
+          renderBackupsSurface(result.backups || [], false, 'Backup imported.');
+        }).catch(function(error){
+          renderBackupsSurface(backups, false, error.message || 'Backup import failed.');
         });
       });
     }
