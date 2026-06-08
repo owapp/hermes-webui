@@ -83,6 +83,14 @@ def test_bridge_rebases_fetch_and_eventsource_to_the_agent_gateway():
     assert "agentScopedUrl" in HERMES_LAYER_JS
 
 
+def test_hosted_mode_brands_browser_title_without_renaming_hermes_agent_ui():
+    assert "function hostedDocumentAssistantName()" in UI_JS
+    assert "window.__hermesLayerHosted ? 'Hermes Layer Agent' : assistantDisplayName()" in UI_JS
+    assert "document.title=hostedDocumentAssistantName();" in UI_JS
+    assert "sessionTitle+' \\u2014 '+hostedDocumentAssistantName()" in UI_JS
+    assert "document.title=typeof hostedDocumentAssistantName==='function'?hostedDocumentAssistantName():name;" in BOOT_JS
+
+
 def test_bridge_only_adds_layer_csrf_to_agent_scoped_fetches():
     assert "function requestInitFromFetchInput" in HERMES_LAYER_JS
     assert "input instanceof Request" in HERMES_LAYER_JS
