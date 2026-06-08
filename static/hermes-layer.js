@@ -389,8 +389,9 @@
     var health = workspace.healthStatus || 'unknown';
     var isRunning = state === 'running';
     var isStopped = state === 'stopped';
+    var isSuspended = state === 'suspended';
     var isBusyState = ['provisioning', 'restarting', 'backing_up', 'restoring', 'updating', 'deleting'].indexOf(state) >= 0;
-    var canStart = isStopped || state === 'failed';
+    var canStart = isStopped || isSuspended || state === 'failed';
     var canStop = isRunning || state === 'failed';
     var canRestart = isRunning || health === 'unhealthy';
     var canRecover = state === 'failed' || health === 'unhealthy';
