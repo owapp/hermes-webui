@@ -991,6 +991,11 @@
   .hl-account-profile{padding:9px 10px 10px;}
   .hl-account-name{font:650 13px/1.25 var(--font-sans,ui-sans-serif,system-ui,sans-serif);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text);}
   .hl-account-email{margin-top:3px;font:500 11px/1.2 var(--font-sans,ui-sans-serif,system-ui,sans-serif);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);}
+  .hl-account-subscription{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:9px;border:1px solid var(--border);border-radius:7px;background:var(--hover-bg);padding:6px 7px;min-width:0;}
+  .hl-account-subscription span{flex:0 0 auto;font:600 10px/1 var(--font-sans,ui-sans-serif,system-ui,sans-serif);color:var(--muted);}
+  .hl-account-subscription strong{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:700 11px/1 var(--font-sans,ui-sans-serif,system-ui,sans-serif);color:var(--text);}
+  .hl-account-subscription.is-ok{border-color:color-mix(in srgb,var(--success,#16a34a) 34%,var(--border));}
+  .hl-account-subscription.is-warn{border-color:color-mix(in srgb,var(--warning,#d97706) 42%,var(--border));}
   .hl-account-link,.hl-account-logout{display:block;width:100%;box-sizing:border-box;border:0;background:transparent;border-radius:7px;color:var(--text);cursor:pointer;font:500 13px/1.2 var(--font-sans,ui-sans-serif,system-ui,sans-serif);padding:9px 10px;text-align:left;text-decoration:none;}
   .hl-account-link:hover,.hl-account-logout:hover{background:var(--hover-bg);}
   .hl-account-separator{height:1px;background:var(--border);margin:5px;}

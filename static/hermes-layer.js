@@ -867,8 +867,32 @@
     button.setAttribute('aria-expanded', String(open));
   }
 
+  function humanizeSubscriptionValue(value){
+    var text = String(value || 'none').replace(/[-_]+/g, ' ').trim();
+    if (!text) return 'None';
+    return text.replace(/\b\w/g, function(match){ return match.toUpperCase(); });
+  }
+
+  function subscriptionStatusClass(status){
+    var normalized = String(status || 'none').toLowerCase();
+    if (normalized === 'active' || normalized === 'trialing') return 'is-ok';
+    if (normalized === 'none' || normalized === 'canceled' || normalized === 'unpaid' || normalized === 'past_due') return 'is-warn';
+    return 'is-neutral';
+  }
+
+  function accountSubscriptionMarkup(subscription){
+    var plan = humanizeSubscriptionValue(subscription && subscription.planKey);
+    var status = String((subscription && subscription.status) || 'none').toLowerCase();
+    var label = plan + ' - ' + humanizeSubscriptionValue(status);
+    return '<div class="hl-account-subscription ' + subscriptionStatusClass(status) + '" data-hl-subscription-status="' + escapeHtml(status) + '">' +
+      '<span>Subscription</span>' +
+      '<strong>' + escapeHtml(label) + '</strong>' +
+      '</div>';
+  }
+
   function renderAccountMenu(root, payload){
     var account = payload && payload.account ? payload.account : {};
+    var subscription = payload && payload.subscription ? payload.subscription : {};
     var links = payload && Array.isArray(payload.links) ? payload.links : [];
     var initials = account.initials || 'U';
     var name = account.name || account.email || 'Account';
@@ -887,6 +911,7 @@
         '<div class="hl-account-profile">' +
           '<div class="hl-account-name">' + escapeHtml(name) + '</div>' +
           '<div class="hl-account-email">' + escapeHtml(email) + '</div>' +
+          accountSubscriptionMarkup(subscription) +
         '</div>' +
         '<div class="hl-account-separator"></div>' +
         linkMarkup +

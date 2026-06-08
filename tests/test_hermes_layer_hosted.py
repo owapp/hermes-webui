@@ -14,6 +14,7 @@ REPO = Path(__file__).parent.parent
 STATIC = REPO / "static"
 HTML = (STATIC / "index.html").read_text(encoding="utf-8")
 HERMES_LAYER_JS = (STATIC / "hermes-layer.js").read_text(encoding="utf-8")
+STYLE_CSS = (STATIC / "style.css").read_text(encoding="utf-8")
 BOOT_JS = (STATIC / "boot.js").read_text(encoding="utf-8")
 PANELS_JS = (STATIC / "panels.js").read_text(encoding="utf-8")
 UI_JS = (STATIC / "ui.js").read_text(encoding="utf-8")
@@ -95,10 +96,16 @@ def test_account_menu_is_avatar_based_not_a_brand_overlay_button():
     assert 'data-hl-account-menu hidden role="menu"' in HERMES_LAYER_JS
     assert 'data-hl-account-button' in HERMES_LAYER_JS
     assert 'data-hl-account-logout' in HERMES_LAYER_JS
+    assert 'data-hl-subscription-status="' in HERMES_LAYER_JS
+    assert "accountSubscriptionMarkup(subscription)" in HERMES_LAYER_JS
+    assert "humanizeSubscriptionValue(subscription && subscription.planKey)" in HERMES_LAYER_JS
     assert "agentApiJson('api/hermes-layer/logout', { method: 'POST' })" in HERMES_LAYER_JS
     assert "controlPlaneUrl('/api/auth/logout')" not in HERMES_LAYER_JS
     assert 'Hermes Layer</button>' not in HERMES_LAYER_JS
     assert 'data-hl-action="' in HERMES_LAYER_JS
+    assert ".hl-account-subscription" in STYLE_CSS
+    assert ".hl-account-subscription.is-ok" in STYLE_CSS
+    assert ".hl-account-subscription.is-warn" in STYLE_CSS
 
 
 def test_hosted_layer_surfaces_use_agent_language_not_infra_labels():
