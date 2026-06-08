@@ -276,15 +276,15 @@ function _providerStatusLabel(system){
 function _renderHostedRuntimeSummary(){
   if(!_isHostedOnboarding())return '';
   const system=(ONBOARDING.status||{}).system||{};
+  const hosted=(ONBOARDING.status||{}).hosted||{};
   const hermesOk=system.hermes_found&&system.imports_ok;
   const providerState=system.chat_ready?'Ready to chat':(system.provider_configured?'Saved, credentials pending':'Needs setup');
   return `
     <div class="onboarding-panel-grid onboarding-hosted-summary">
       <div class="onboarding-check ${hermesOk?'ok':'warn'}"><strong>Hermes Agent</strong><span>${hermesOk?'Ready':'Starting'}</span></div>
       <div class="onboarding-check ${system.chat_ready?'ok':system.provider_configured?'warn':'muted'}"><strong>Provider</strong><span>${providerState}</span></div>
-      <div class="onboarding-check ok"><strong>Access</strong><span>Managed by Hermes Layer</span></div>
-    </div>
-    <p class="onboarding-copy"><strong>Context optimization:</strong> ${((ONBOARDING.status||{}).hosted||{}).headroom?'Headroom is available for this workspace.':'Not enabled for this workspace.'}</p>`;
+      <div class="onboarding-check ${hosted.headroom?'ok':'muted'}"><strong>Context optimization</strong><span>${hosted.headroom?'Headroom active':'Not enabled'}</span></div>
+    </div>`;
 }
 
 function _renderOnboardingBody(){
@@ -444,7 +444,7 @@ function _renderOnboardingBody(){
       <div><strong>${t('onboarding_model_label')}</strong><span>${esc(_getOnboardingSelectedModel()||t('onboarding_not_set'))}</span></div>
       <div><strong>${t('onboarding_workspace_label')}</strong><span>${esc(ONBOARDING.form.workspace||t('onboarding_not_set'))}</span></div>
       ${_isHostedOnboarding()
-        ? `<div><strong>Access</strong><span>Managed by Hermes Layer account auth</span></div>`
+        ? `<div><strong>Context optimization</strong><span>${((ONBOARDING.status||{}).hosted||{}).headroom?'Headroom active':'Not enabled'}</span></div>`
         : `<div><strong>${t('onboarding_check_password')}</strong><span>${t(_getOnboardingPasswordSummaryKey(settings))}</span></div>`}
     </div>
     ${ONBOARDING.form.baseUrl?`<p class="onboarding-copy"><strong>${t('onboarding_base_url_label')}</strong> ${esc(ONBOARDING.form.baseUrl)}</p>`:''}
