@@ -219,7 +219,7 @@ def test_dashboard_and_host_editor_surfaces_are_hosted_guarded():
         block = UI_JS[start:start + 340]
         assert "window.__hermesLayerHosted" in block, f"{marker} must be hosted-aware"
 
-    for route in ["/api/file/reveal", "/api/file/open-vscode"]:
+    for route in ["/api/file/reveal", "/api/file/open-vscode", "/api/file/path"]:
         route_pos = UI_JS.index(route)
         guard_pos = UI_JS.rfind("if(!window.__hermesLayerHosted)", 0, route_pos)
         assert guard_pos != -1
