@@ -528,16 +528,22 @@
     var currentPlan = subscription.planKey || 'none';
     var stripeReady = !!state.stripeConfigured;
     var portalAvailable = !!state.portalAvailable;
+    var activeSubscription = ['active', 'trialing'].indexOf(subscription.status || '') >= 0;
     var planCards = plans.map(function(plan){
-      var active = plan.key === currentPlan && ['active', 'trialing'].indexOf(subscription.status || '') >= 0;
+      var active = activeSubscription && plan.key === currentPlan;
       var features = Array.isArray(plan.features) ? plan.features : [];
+      var action = activeSubscription
+        ? (active
+            ? '<button class="hl-surface-button" type="button" disabled>Current plan</button>'
+            : '<div class="hl-surface-muted">Manage plan changes in the billing portal.</div>')
+        : '<button class="hl-surface-button is-primary" type="button" data-hl-checkout-plan="' + escapeHtml(plan.key || '') + '" ' + (busy || !stripeReady || !plan.priceId ? 'disabled' : '') + '>Choose plan</button>';
       return '<article class="hl-billing-plan' + (active ? ' is-active' : '') + '">' +
         '<div class="hl-billing-plan-head">' +
           '<div><h3>' + escapeHtml(plan.name || plan.key) + '</h3><p>' + escapeHtml(plan.description || '') + '</p></div>' +
           '<strong>EUR ' + escapeHtml(plan.priceEur || '-') + '<span>/mo</span></strong>' +
         '</div>' +
         '<ul>' + features.map(function(feature){ return '<li>' + escapeHtml(feature) + '</li>'; }).join('') + '</ul>' +
-        '<button class="hl-surface-button ' + (active ? '' : 'is-primary') + '" type="button" data-hl-checkout-plan="' + escapeHtml(plan.key || '') + '" ' + (busy || !stripeReady || !plan.priceId ? 'disabled' : '') + '>' + (active ? 'Current plan' : 'Choose plan') + '</button>' +
+        action +
       '</article>';
     }).join('');
     var body =
