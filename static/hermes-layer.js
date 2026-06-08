@@ -58,6 +58,27 @@
     return /^(POST|PUT|PATCH|DELETE)$/i.test(method || 'GET');
   }
 
+  function requestInitFromFetchInput(input, init){
+    var opts = {};
+    if (typeof Request !== 'undefined' && input instanceof Request) {
+      opts = {
+        method: input.method,
+        headers: input.headers,
+        credentials: input.credentials,
+        cache: input.cache,
+        redirect: input.redirect,
+        referrer: input.referrer,
+        integrity: input.integrity,
+        keepalive: input.keepalive,
+        signal: input.signal
+      };
+      if (!/^(GET|HEAD)$/i.test(input.method)) {
+        opts.body = input.clone().body;
+      }
+    }
+    return init ? Object.assign(opts, init) : opts;
+  }
+
   function addLayerCsrf(input, init){
     var opts = init ? Object.assign({}, init) : {};
     var method = (opts.method || (input && input.method) || 'GET').toUpperCase();
@@ -75,9 +96,9 @@
   if (originalFetch) {
     window.fetch = function(input, init){
       var scoped = agentScopedUrl(input);
-      var nextInput = scoped || input;
-      var opts = addLayerCsrf(nextInput, init);
-      return originalFetch(nextInput, opts);
+      if (!scoped) return originalFetch(input, init);
+      var opts = requestInitFromFetchInput(input, init);
+      return originalFetch(scoped, addLayerCsrf(input, opts));
     };
 
     if (navigator.sendBeacon) {
@@ -100,7 +121,7 @@
             return true;
           }
         } catch (_) {}
-        return originalBeacon(url, data);
+        return originalBeacon(scoped || url, data);
       };
     }
   }

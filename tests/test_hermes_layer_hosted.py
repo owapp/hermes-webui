@@ -83,6 +83,15 @@ def test_bridge_rebases_fetch_and_eventsource_to_the_agent_gateway():
     assert "agentScopedUrl" in HERMES_LAYER_JS
 
 
+def test_bridge_only_adds_layer_csrf_to_agent_scoped_fetches():
+    assert "function requestInitFromFetchInput" in HERMES_LAYER_JS
+    assert "input instanceof Request" in HERMES_LAYER_JS
+    assert "input.clone().body" in HERMES_LAYER_JS
+    assert "if (!scoped) return originalFetch(input, init);" in HERMES_LAYER_JS
+    assert "return originalFetch(scoped, addLayerCsrf(input, opts));" in HERMES_LAYER_JS
+    assert "return originalBeacon(scoped || url, data);" in HERMES_LAYER_JS
+
+
 def test_hosted_mode_blocks_webui_updates_shutdown_auth_and_passkeys():
     assert "if(!window.__hermesLayerHosted&&" in BOOT_JS
     assert "api/updates/check" in BOOT_JS
