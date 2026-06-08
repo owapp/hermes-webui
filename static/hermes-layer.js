@@ -267,6 +267,68 @@
     });
   }
 
+  function openSupportSurface(){
+    surfaceShell(
+      'Support',
+      'Send a support request without leaving your Hermes Agent workspace.',
+      '<div class="hl-surface-muted">Loading...</div>',
+      true
+    );
+    agentApiJson('api/hermes-layer/support/tickets').then(function(result){
+      renderSupportSurface(result.tickets || [], false, '');
+    }).catch(function(error){
+      surfaceShell(
+        'Support',
+        'Send a support request without leaving your Hermes Agent workspace.',
+        '<div class="hl-surface-alert">' + escapeHtml(error.message || 'Support failed.') + '</div>',
+        false
+      );
+    });
+  }
+
+  function renderSupportSurface(tickets, busy, message){
+    var rows = (tickets || []).map(function(ticket){
+      return '<div class="hl-support-ticket">' +
+        '<div><strong>' + escapeHtml(ticket.subject) + '</strong><span>' + escapeHtml(ticket.status || 'open') + ' - ' + escapeHtml(formatDate(ticket.createdAt)) + '</span></div>' +
+        '<p>' + escapeHtml(ticket.messagePreview || '') + '</p>' +
+      '</div>';
+    }).join('');
+    var body =
+      (message ? '<div class="hl-surface-alert">' + escapeHtml(message) + '</div>' : '') +
+      '<form class="hl-support-form" data-hl-support-form>' +
+        '<label>Subject<input name="subject" type="text" maxlength="160" required placeholder="What do you need help with?"></label>' +
+        '<label>Message<textarea name="message" maxlength="5000" required rows="7" placeholder="Describe the issue, expected behavior, and any useful context."></textarea></label>' +
+        '<button class="hl-surface-button is-primary" type="submit" ' + (busy ? 'disabled' : '') + '>Send request</button>' +
+      '</form>' +
+      '<h3>Recent requests</h3>' +
+      '<div class="hl-support-list">' + (rows || '<div class="hl-surface-muted">No support requests yet.</div>') + '</div>';
+    var root = surfaceShell(
+      'Support',
+      'Send a support request without leaving your Hermes Agent workspace.',
+      body,
+      busy
+    );
+    var form = root.querySelector('[data-hl-support-form]');
+    if (form) {
+      form.addEventListener('submit', function(event){
+        event.preventDefault();
+        var subject = (form.querySelector('[name="subject"]') || {}).value || '';
+        var text = (form.querySelector('[name="message"]') || {}).value || '';
+        renderSupportSurface(tickets, true, 'Sending support request...');
+        agentApiJson('api/hermes-layer/support/tickets', {
+          method: 'POST',
+          body: JSON.stringify({ subject: subject, message: text })
+        }).then(function(){
+          return agentApiJson('api/hermes-layer/support/tickets');
+        }).then(function(result){
+          renderSupportSurface(result.tickets || [], false, 'Support request sent.');
+        }).catch(function(error){
+          renderSupportSurface(tickets, false, error.message || 'Support request failed.');
+        });
+      });
+    }
+  }
+
   function renderBackupsSurface(backups, busy, message){
     var rows = (backups || []).map(function(backup){
       var restorable = backup.status === 'completed' || backup.status === 'restored';
@@ -453,6 +515,7 @@
         setOpen(root, false);
         if (action.getAttribute('data-hl-action') === 'optimization') openOptimizationSurface();
         if (action.getAttribute('data-hl-action') === 'backups') openBackupsSurface();
+        if (action.getAttribute('data-hl-action') === 'support') openSupportSurface();
       });
     });
   }
