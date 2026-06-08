@@ -1,5 +1,39 @@
 const ONBOARDING={status:null,step:0,steps:['system','setup','workspace','password','finish'],form:{provider:'openrouter',workspace:'',model:'',password:'',apiKey:'',baseUrl:''},active:false,probe:{status:'idle',error:null,detail:'',models:null,probedKey:''}};
 
+function _isHostedOnboarding(){
+  return !!(((ONBOARDING.status||{}).hosted||{}).enabled);
+}
+
+function _hostedOnboardingReady(){
+  const system=(ONBOARDING.status||{}).system||{};
+  return !!system.chat_ready;
+}
+
+function _configureOnboardingMode(){
+  const hosted=_isHostedOnboarding();
+  ONBOARDING.steps=hosted?['system','setup','workspace','finish']:['system','setup','workspace','password','finish'];
+  if(ONBOARDING.step>=ONBOARDING.steps.length)ONBOARDING.step=ONBOARDING.steps.length-1;
+  const badge=document.querySelector('#onboardingOverlay .onboarding-badge');
+  const title=$('onboardingTitle');
+  const lead=$('onboardingLead');
+  const skip=$('onboardingSkipBtn');
+  if(hosted){
+    if(badge)badge.textContent='HOSTED SETUP';
+    if(title)title.textContent='Configure your hosted Hermes Agent';
+    if(lead)lead.textContent='Connect a provider, choose the model and open your first hosted Hermes workspace. Hermes Layer manages access and the runtime behind this console.';
+    if(skip){
+      skip.textContent=_hostedOnboardingReady()?'Finish later':'Provider required';
+      skip.disabled=!_hostedOnboardingReady();
+      skip.style.opacity=_hostedOnboardingReady()?'.72':'.38';
+    }
+  }else{
+    if(skip){
+      skip.disabled=false;
+      skip.style.opacity='.7';
+    }
+  }
+}
+
 // ── Onboarding base-URL probe (#1499) ───────────────────────────────────────
 // Probes <base_url>/models so the wizard can validate the configured endpoint
 // before persisting AND populate the model dropdown from the live catalog.
@@ -118,6 +152,14 @@ function _getOnboardingCurrentSetup(){
 }
 
 function _onboardingStepMeta(key){
+  if(_isHostedOnboarding()){
+    return ({
+      system:{title:'Agent check',desc:'Confirm the hosted runtime is ready.'},
+      setup:{title:'Provider setup',desc:'Connect the model provider for this agent.'},
+      workspace:{title:'Workspace + model',desc:'Choose the default workspace and model.'},
+      finish:{title:'Start',desc:'Review and open your agent.'}
+    })[key];
+  }
   return ({
     system:{title:t('onboarding_step_system_title'),desc:t('onboarding_step_system_desc')},
     setup:{title:t('onboarding_step_setup_title'),desc:t('onboarding_step_setup_desc')},
@@ -242,21 +284,34 @@ function _renderOnboardingBody(){
   const nextBtn=$('onboardingNextBtn');
   const backBtn=$('onboardingBackBtn');
   if(backBtn) backBtn.style.display=ONBOARDING.step>0?'':'none';
-  if(nextBtn) nextBtn.textContent=key==='finish'?t('onboarding_open'):t('onboarding_continue');
+  if(backBtn&&_isHostedOnboarding()) backBtn.textContent='Back';
+  if(nextBtn) nextBtn.textContent=_isHostedOnboarding()?(key==='finish'?'Open Agent':'Continue'):(key==='finish'?t('onboarding_open'):t('onboarding_continue'));
 
   if(key==='system'){
     const hermesOk=system.hermes_found&&system.imports_ok;
     const setupOk=!!system.chat_ready;
-    _setOnboardingNotice(system.provider_note|| (setupOk?t('onboarding_notice_system_ready'):t('onboarding_notice_system_unavailable')),setupOk?'success':(hermesOk?'info':'warn'));
+    const hosted=_isHostedOnboarding();
+    const agentLabel=hosted?'Hermes Agent':t('onboarding_check_agent');
+    const agentState=hosted?(hermesOk?'Detected and ready':'Starting or unavailable'):(hermesOk?t('onboarding_check_agent_ready'):t('onboarding_check_agent_missing'));
+    const providerLabel=hosted?'Provider configuration':t('onboarding_check_provider');
+    const providerState=hosted?(system.chat_ready?'Ready to chat':(system.provider_configured?'Saved, credentials pending':'Needs setup')):_providerStatusLabel(system);
+    _setOnboardingNotice(
+      hosted
+        ? (setupOk?'Your hosted Hermes Agent is ready to chat.':(system.provider_note||'Choose a provider before using your hosted Hermes Agent.'))
+        : (system.provider_note|| (setupOk?t('onboarding_notice_system_ready'):t('onboarding_notice_system_unavailable'))),
+      setupOk?'success':(hermesOk?'info':'warn')
+    );
     body.innerHTML=`
       <div class="onboarding-panel-grid">
-        <div class="onboarding-check ${hermesOk?'ok':'warn'}"><strong>${t('onboarding_check_agent')}</strong><span>${hermesOk?t('onboarding_check_agent_ready'):t('onboarding_check_agent_missing')}</span></div>
-        <div class="onboarding-check ${(setupOk?'ok':system.provider_configured?'warn':'muted')}"><strong>${t('onboarding_check_provider')}</strong><span>${_providerStatusLabel(system)}</span></div>
-        <div class="onboarding-check ${(settings.password_enabled?'ok':'muted')}"><strong>${t('onboarding_check_password')}</strong><span>${settings.password_enabled?t('onboarding_check_password_enabled'):t('onboarding_check_password_disabled')}</span></div>
+        <div class="onboarding-check ${hermesOk?'ok':'warn'}"><strong>${agentLabel}</strong><span>${agentState}</span></div>
+        <div class="onboarding-check ${(setupOk?'ok':system.provider_configured?'warn':'muted')}"><strong>${providerLabel}</strong><span>${providerState}</span></div>
+        ${hosted
+          ? `<div class="onboarding-check ok"><strong>Hermes Layer access</strong><span>Managed by your SaaS account</span></div>`
+          : `<div class="onboarding-check ${(settings.password_enabled?'ok':'muted')}"><strong>${t('onboarding_check_password')}</strong><span>${settings.password_enabled?t('onboarding_check_password_enabled'):t('onboarding_check_password_disabled')}</span></div>`}
       </div>
       <div class="onboarding-copy">
-        <p><strong>${t('onboarding_config_file')}</strong> ${esc(system.config_path||t('onboarding_unknown'))}</p>
-        <p><strong>${t('onboarding_env_file')}</strong> ${esc(system.env_path||t('onboarding_unknown'))}</p>
+        ${hosted?`<p><strong>Hosted runtime:</strong> isolated and managed by Hermes Layer.</p>`:`<p><strong>${t('onboarding_config_file')}</strong> ${esc(system.config_path||t('onboarding_unknown'))}</p><p><strong>${t('onboarding_env_file')}</strong> ${esc(system.env_path||t('onboarding_unknown'))}</p>`}
+        ${hosted&&((ONBOARDING.status||{}).hosted||{}).headroom?`<p><strong>Context optimization:</strong> Headroom is available for this workspace.</p>`:''}
         <p>${esc(system.provider_note||'')}</p>
         ${system.current_provider?`<p><strong>${t('onboarding_current_provider')}</strong> ${esc(system.current_provider)}${system.current_model?` — ${esc(system.current_model)}`:''}</p>`:''}
         ${system.current_base_url?`<p><strong>${t('onboarding_base_url_label')}</strong> ${esc(system.current_base_url)}</p>`:''}
@@ -273,7 +328,9 @@ function _renderOnboardingBody(){
     const keyHelp=provider
       ? (provider.id==='anthropic'
         ? 'Anthropic API key path: paste an Anthropic Console API key here. This is separate from a Claude Code subscription; use the Claude Code OAuth card if you want subscription credentials instead.'
-        : `${t('onboarding_api_key_help_prefix')} ${esc(provider.env_var)}.`)
+        : (_isHostedOnboarding()
+          ? 'Stored only inside this isolated hosted Hermes workspace.'
+          : `${t('onboarding_api_key_help_prefix')} ${esc(provider.env_var)}.`))
       : '';
 
     // OAuth provider path: configured via CLI, no API key input needed.
@@ -379,10 +436,12 @@ function _renderOnboardingBody(){
       <div><strong>${t('onboarding_provider_label')}</strong><span>${esc((provider&&provider.label)||ONBOARDING.form.provider||t('onboarding_not_set'))}</span></div>
       <div><strong>${t('onboarding_model_label')}</strong><span>${esc(_getOnboardingSelectedModel()||t('onboarding_not_set'))}</span></div>
       <div><strong>${t('onboarding_workspace_label')}</strong><span>${esc(ONBOARDING.form.workspace||t('onboarding_not_set'))}</span></div>
-      <div><strong>${t('onboarding_check_password')}</strong><span>${t(_getOnboardingPasswordSummaryKey(settings))}</span></div>
+      ${_isHostedOnboarding()
+        ? `<div><strong>Access</strong><span>Managed by Hermes Layer account auth</span></div>`
+        : `<div><strong>${t('onboarding_check_password')}</strong><span>${t(_getOnboardingPasswordSummaryKey(settings))}</span></div>`}
     </div>
     ${ONBOARDING.form.baseUrl?`<p class="onboarding-copy"><strong>${t('onboarding_base_url_label')}</strong> ${esc(ONBOARDING.form.baseUrl)}</p>`:''}
-    <p class="onboarding-copy">${t('onboarding_finish_help')}</p>`;
+    <p class="onboarding-copy">${_isHostedOnboarding()?'Your agent opens with the selected provider, model and workspace. You can change provider settings later from WebUI preferences.':t('onboarding_finish_help')}</p>`;
 }
 
 function _getOnboardingPasswordSummaryKey(settings){
@@ -418,6 +477,7 @@ async function loadOnboardingWizard(){
   try{
     const status=await api('/api/onboarding/status');
     ONBOARDING.status=status;
+    _configureOnboardingMode();
     const current=((status.setup||{}).current)||{};
     ONBOARDING.form.provider=current.provider||'openrouter';
     ONBOARDING.form.workspace=(status.workspaces&&status.workspaces.last)||status.settings.default_workspace||'';
@@ -427,6 +487,7 @@ async function loadOnboardingWizard(){
     ONBOARDING.form.baseUrl=current.base_url||'';
     ONBOARDING.active=!status.completed;
     if(!ONBOARDING.active) return false;
+    _configureOnboardingMode();
     $('onboardingOverlay').style.display='flex';
     _renderOnboardingSteps();
     _renderOnboardingBody();
@@ -478,7 +539,7 @@ async function _saveOnboardingDefaults(){
   }
   // Model persisted by /api/onboarding/setup — no /api/default-model call needed here
   const body={default_workspace:workspace};
-  if(password) body._set_password=password;
+  if(password&&!_isHostedOnboarding()) body._set_password=password;
   const saved=await api('/api/settings',{method:'POST',body:JSON.stringify(body)});
   if(ONBOARDING.status){
     ONBOARDING.status.settings={...(ONBOARDING.status.settings||{}),password_enabled:!!saved.auth_enabled};
@@ -505,6 +566,10 @@ async function _finishOnboarding(){
 
 async function skipOnboarding(){
   try{
+    if(_isHostedOnboarding()&&!_hostedOnboardingReady()){
+      _setOnboardingNotice('Connect a provider first. Your hosted agent needs a working model before setup can be skipped.','warn');
+      return;
+    }
     // Mark onboarding completed server-side without changing any config
     await api('/api/onboarding/complete',{method:'POST',body:'{}'});
     ONBOARDING.active=false;

@@ -202,6 +202,14 @@ _UNSUPPORTED_PROVIDER_NOTE = (
 )
 
 
+def _hosted_onboarding_enabled() -> bool:
+    return os.environ.get("HERMES_LAYER_HOSTED_ONBOARDING", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+
+
 def _get_active_hermes_home() -> Path:
     try:
         from api.profiles import get_active_hermes_home
@@ -845,6 +853,7 @@ def get_onboarding_status() -> dict:
     cfg = get_config()
     imports_ok, missing, errors = verify_hermes_imports()
     runtime = _status_from_runtime(cfg, imports_ok)
+    hosted_onboarding = _hosted_onboarding_enabled()
     workspaces = load_workspaces()
     last_workspace = get_last_workspace()
     available_models = get_available_models()
@@ -906,8 +915,16 @@ def get_onboarding_status() -> dict:
         except Exception:
             logger.debug("Failed to persist onboarding_completed", exc_info=True)
 
+    if hosted_onboarding:
+        runtime.pop("env_path", None)
+
     return {
         "completed": bool(settings.get("onboarding_completed")) or auto_completed or config_auto_completed,
+        "hosted": {
+            "enabled": hosted_onboarding,
+            "managed_auth": hosted_onboarding,
+            "headroom": bool(os.environ.get("HERMES_LAYER_HEADROOM_BASE_URL", "").strip()),
+        },
         "settings": {
             "default_model": settings.get("default_model") or DEFAULT_MODEL,
             "default_workspace": settings.get("default_workspace")
@@ -920,7 +937,7 @@ def get_onboarding_status() -> dict:
             "imports_ok": bool(imports_ok),
             "missing_modules": missing,
             "import_errors": errors,
-            "config_path": str(_get_config_path()),
+            "config_path": "" if hosted_onboarding else str(_get_config_path()),
             "config_exists": Path(_get_config_path()).exists(),
             **runtime,
         },
