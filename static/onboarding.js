@@ -260,6 +260,7 @@ function _renderOnboardingModelField(){
 }
 
 function _renderOnboardingProviderOAuthField(provider){
+  if(_isHostedOnboarding())return '';
   if(!provider||provider.oauth_provider!=='anthropic')return '';
   return `<div class="onboarding-oauth-card onboarding-oauth-pending" style="margin-top:12px">
     <div class="onboarding-oauth-icon">🔑</div>
@@ -331,7 +332,9 @@ function _renderOnboardingBody(){
     const showBaseUrl=provider&&provider.requires_base_url;
     const keyHelp=provider
       ? (provider.id==='anthropic'
-        ? 'Anthropic API key path: paste an Anthropic Console API key here. This is separate from a Claude Code subscription; use the Claude Code OAuth card if you want subscription credentials instead.'
+        ? (_isHostedOnboarding()
+          ? 'Anthropic API key path: paste an Anthropic Console API key here.'
+          : 'Anthropic API key path: paste an Anthropic Console API key here. This is separate from a Claude Code subscription; use the Claude Code OAuth card if you want subscription credentials instead.')
         : (_isHostedOnboarding()
           ? ''
           : `${t('onboarding_api_key_help_prefix')} ${esc(provider.env_var)}.`))
@@ -403,7 +406,7 @@ function _renderOnboardingBody(){
       ${_renderOnboardingBaseUrlField(showBaseUrl)}
       ${keyHelp?`<p class="onboarding-copy">${keyHelp}</p>`:''}
       ${showBaseUrl?`<p class="onboarding-copy">${t('onboarding_base_url_help')}</p>`:''}
-      <p class="onboarding-copy">${esc(setup.unsupported_note||'')||''}</p>`;
+      ${_isHostedOnboarding()?'':`<p class="onboarding-copy">${esc(setup.unsupported_note||'')||''}</p>`}`;
     return;
   }
 
