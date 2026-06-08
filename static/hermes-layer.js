@@ -286,6 +286,218 @@
     });
   }
 
+  function openAccountSurface(message){
+    surfaceShell(
+      'Account',
+      'Manage your Hermes Layer account without leaving your agent workspace.',
+      '<div class="hl-surface-muted">Loading...</div>',
+      true
+    );
+    agentApiJson('api/hermes-layer/account').then(function(result){
+      renderAccountSurface(result.user || {}, result.subscription || null, false, message || '');
+    }).catch(function(error){
+      surfaceShell(
+        'Account',
+        'Manage your Hermes Layer account without leaving your agent workspace.',
+        '<div class="hl-surface-alert">' + escapeHtml(error.message || 'Account failed.') + '</div>',
+        false
+      );
+    });
+  }
+
+  function openBillingSurface(message){
+    surfaceShell(
+      'Billing',
+      'Manage your Hermes Layer subscription through Stripe Checkout and Customer Portal.',
+      '<div class="hl-surface-muted">Loading...</div>',
+      true
+    );
+    Promise.all([
+      agentApiJson('api/hermes-layer/billing/config'),
+      agentApiJson('api/hermes-layer/billing/state')
+    ]).then(function(results){
+      renderBillingSurface(results[0] || {}, results[1] || {}, false, message || '');
+    }).catch(function(error){
+      surfaceShell(
+        'Billing',
+        'Manage your Hermes Layer subscription through Stripe Checkout and Customer Portal.',
+        '<div class="hl-surface-alert">' + escapeHtml(error.message || 'Billing failed.') + '</div>',
+        false
+      );
+    });
+  }
+
+  function renderAccountSurface(user, subscription, busy, message){
+    var body =
+      (message ? '<div class="hl-surface-alert">' + escapeHtml(message) + '</div>' : '') +
+      '<div class="hl-surface-metrics">' +
+        metric('Email', user.email || '-') +
+        metric('Role', user.role || 'user') +
+        metric('Plan', (subscription && subscription.planKey) || 'none') +
+        metric('Status', (subscription && subscription.status) || 'none') +
+      '</div>' +
+      '<form class="hl-account-form" data-hl-profile-form>' +
+        '<h3>Profile</h3>' +
+        '<label>Name<input name="name" type="text" maxlength="120" required value="' + escapeHtml(user.name || '') + '"></label>' +
+        '<button class="hl-surface-button is-primary" type="submit" ' + (busy ? 'disabled' : '') + '>Save profile</button>' +
+      '</form>' +
+      '<form class="hl-account-form" data-hl-password-form>' +
+        '<h3>Password</h3>' +
+        '<label>Current password<input name="currentPassword" type="password" autocomplete="current-password" required></label>' +
+        '<label>New password<input name="newPassword" type="password" autocomplete="new-password" minlength="10" required></label>' +
+        '<button class="hl-surface-button" type="submit" ' + (busy ? 'disabled' : '') + '>Change password</button>' +
+      '</form>';
+    var root = surfaceShell(
+      'Account',
+      'Manage your Hermes Layer account without leaving your agent workspace.',
+      body,
+      busy
+    );
+    var profileForm = root.querySelector('[data-hl-profile-form]');
+    if (profileForm) {
+      profileForm.addEventListener('submit', function(event){
+        event.preventDefault();
+        var name = (profileForm.querySelector('[name="name"]') || {}).value || '';
+        renderAccountSurface(user, subscription, true, 'Saving profile...');
+        agentApiJson('api/hermes-layer/account/profile', {
+          method: 'PATCH',
+          body: JSON.stringify({ name: name })
+        }).then(function(result){
+          initAccountMenu();
+          renderAccountSurface(result.user || user, subscription, false, 'Profile updated.');
+        }).catch(function(error){
+          renderAccountSurface(user, subscription, false, error.message || 'Profile update failed.');
+        });
+      });
+    }
+    var passwordForm = root.querySelector('[data-hl-password-form]');
+    if (passwordForm) {
+      passwordForm.addEventListener('submit', function(event){
+        event.preventDefault();
+        var currentPassword = (passwordForm.querySelector('[name="currentPassword"]') || {}).value || '';
+        var newPassword = (passwordForm.querySelector('[name="newPassword"]') || {}).value || '';
+        renderAccountSurface(user, subscription, true, 'Changing password...');
+        agentApiJson('api/hermes-layer/account/password', {
+          method: 'POST',
+          body: JSON.stringify({ currentPassword: currentPassword, newPassword: newPassword })
+        }).then(function(result){
+          renderAccountSurface(result.user || user, subscription, false, 'Password changed. Other sessions were signed out.');
+        }).catch(function(error){
+          renderAccountSurface(user, subscription, false, error.message || 'Password change failed.');
+        });
+      });
+    }
+  }
+
+  function renderBillingSurface(config, state, busy, message){
+    var plans = Array.isArray(config.plans) ? config.plans : [];
+    var subscription = state.subscription || {};
+    var currentPlan = subscription.planKey || 'none';
+    var stripeReady = !!state.stripeConfigured;
+    var portalAvailable = !!state.portalAvailable;
+    var planCards = plans.map(function(plan){
+      var active = plan.key === currentPlan && ['active', 'trialing'].indexOf(subscription.status || '') >= 0;
+      var features = Array.isArray(plan.features) ? plan.features : [];
+      return '<article class="hl-billing-plan' + (active ? ' is-active' : '') + '">' +
+        '<div class="hl-billing-plan-head">' +
+          '<div><h3>' + escapeHtml(plan.name || plan.key) + '</h3><p>' + escapeHtml(plan.description || '') + '</p></div>' +
+          '<strong>EUR ' + escapeHtml(plan.priceEur || '-') + '<span>/mo</span></strong>' +
+        '</div>' +
+        '<ul>' + features.map(function(feature){ return '<li>' + escapeHtml(feature) + '</li>'; }).join('') + '</ul>' +
+        '<button class="hl-surface-button ' + (active ? '' : 'is-primary') + '" type="button" data-hl-checkout-plan="' + escapeHtml(plan.key || '') + '" ' + (busy || !stripeReady || !plan.priceId ? 'disabled' : '') + '>' + (active ? 'Current plan' : 'Choose plan') + '</button>' +
+      '</article>';
+    }).join('');
+    var body =
+      (message ? '<div class="hl-surface-alert">' + escapeHtml(message) + '</div>' : '') +
+      (!stripeReady ? '<div class="hl-surface-alert">Stripe test keys and EUR price IDs are not configured for this environment.</div>' : '') +
+      '<div class="hl-surface-row">' +
+        '<div><h3>Subscription</h3><p>Checkout, tax collection and billing changes are handled by Stripe.</p></div>' +
+        '<button class="hl-surface-button" type="button" data-hl-portal ' + (busy || !portalAvailable ? 'disabled' : '') + '>Open billing portal</button>' +
+      '</div>' +
+      '<div class="hl-surface-metrics">' +
+        metric('Plan', currentPlan) +
+        metric('Status', subscription.status || 'none') +
+        metric('Tax', config.taxEnabled ? 'enabled' : 'disabled') +
+        metric('Currency', config.currency || 'EUR') +
+      '</div>' +
+      '<div class="hl-billing-grid">' + (planCards || '<div class="hl-surface-muted">No plans configured.</div>') + '</div>';
+    var root = surfaceShell(
+      'Billing',
+      'Manage your Hermes Layer subscription through Stripe Checkout and Customer Portal.',
+      body,
+      busy
+    );
+    root.querySelectorAll('[data-hl-checkout-plan]').forEach(function(button){
+      button.addEventListener('click', function(){
+        var planKey = button.getAttribute('data-hl-checkout-plan') || 'starter';
+        renderBillingSurface(config, state, true, 'Opening Stripe Checkout...');
+        agentApiJson('api/hermes-layer/billing/checkout', {
+          method: 'POST',
+          body: JSON.stringify({ planKey: planKey })
+        }).then(function(result){
+          if (result && result.url) window.location.assign(result.url);
+          else renderBillingSurface(config, state, false, 'Stripe did not return a Checkout URL.');
+        }).catch(function(error){
+          renderBillingSurface(config, state, false, error.message || 'Checkout failed.');
+        });
+      });
+    });
+    var portal = root.querySelector('[data-hl-portal]');
+    if (portal) {
+      portal.addEventListener('click', function(){
+        renderBillingSurface(config, state, true, 'Opening Stripe Customer Portal...');
+        agentApiJson('api/hermes-layer/billing/portal', { method: 'POST' }).then(function(result){
+          if (result && result.url) window.location.assign(result.url);
+          else renderBillingSurface(config, state, false, 'Stripe did not return a portal URL.');
+        }).catch(function(error){
+          renderBillingSurface(config, state, false, error.message || 'Billing portal failed.');
+        });
+      });
+    }
+  }
+
+  function handleBillingReturn(){
+    var params = new URLSearchParams(location.search || '');
+    var checkout = params.get('checkout');
+    var sessionId = params.get('session_id');
+    var billing = params.get('billing');
+    if (!checkout && billing !== 'portal') return;
+    params.delete('checkout');
+    params.delete('session_id');
+    params.delete('billing');
+    var nextSearch = params.toString();
+    var nextUrl = location.pathname + (nextSearch ? '?' + nextSearch : '') + location.hash;
+    if (history && history.replaceState) history.replaceState(null, document.title, nextUrl);
+    if (checkout === 'cancelled') {
+      openBillingSurface('Checkout cancelled.');
+      return;
+    }
+    if (billing === 'portal') {
+      openBillingSurface('Returned from Stripe Customer Portal.');
+      return;
+    }
+    if (checkout !== 'success') return;
+    if (!sessionId) {
+      openBillingSurface('Checkout session is missing.');
+      return;
+    }
+    surfaceShell(
+      'Billing',
+      'Manage your Hermes Layer subscription through Stripe Checkout and Customer Portal.',
+      '<div class="hl-surface-muted">Syncing subscription...</div>',
+      true
+    );
+    agentApiJson('api/hermes-layer/billing/sync-checkout', {
+      method: 'POST',
+      body: JSON.stringify({ sessionId: sessionId })
+    }).then(function(){
+      initAccountMenu();
+      openBillingSurface('Subscription activated.');
+    }).catch(function(error){
+      openBillingSurface(error.message || 'Checkout sync failed.');
+    });
+  }
+
   function renderSupportSurface(tickets, busy, message){
     var rows = (tickets || []).map(function(ticket){
       return '<div class="hl-support-ticket">' +
@@ -513,6 +725,8 @@
       action.addEventListener('click', function(event){
         event.preventDefault();
         setOpen(root, false);
+        if (action.getAttribute('data-hl-action') === 'account') openAccountSurface();
+        if (action.getAttribute('data-hl-action') === 'billing') openBillingSurface();
         if (action.getAttribute('data-hl-action') === 'optimization') openOptimizationSurface();
         if (action.getAttribute('data-hl-action') === 'backups') openBackupsSurface();
         if (action.getAttribute('data-hl-action') === 'support') openSupportSurface();
@@ -537,6 +751,11 @@
       });
   }
 
+  function initHermesLayer(){
+    initAccountMenu();
+    handleBillingReturn();
+  }
+
   document.addEventListener('click', function(event){
     var root = document.getElementById('hermes-layer-account');
     if (root && !root.contains(event.target)) setOpen(root, false);
@@ -550,8 +769,8 @@
   });
 
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', initAccountMenu, { once: true });
+    document.addEventListener('DOMContentLoaded', initHermesLayer, { once: true });
   } else {
-    initAccountMenu();
+    initHermesLayer();
   }
 })();
