@@ -7,6 +7,7 @@ mount out of the stable titlebar area, the fork should fail before it ships.
 """
 
 from pathlib import Path
+import struct
 
 
 REPO = Path(__file__).parent.parent
@@ -16,6 +17,12 @@ HERMES_LAYER_JS = (STATIC / "hermes-layer.js").read_text(encoding="utf-8")
 BOOT_JS = (STATIC / "boot.js").read_text(encoding="utf-8")
 PANELS_JS = (STATIC / "panels.js").read_text(encoding="utf-8")
 UI_JS = (STATIC / "ui.js").read_text(encoding="utf-8")
+
+
+def png_size(path: Path) -> tuple[int, int]:
+    data = path.read_bytes()
+    assert data.startswith(b"\x89PNG\r\n\x1a\n")
+    return struct.unpack(">II", data[16:24])
 
 
 def test_account_avatar_mount_is_part_of_the_webui_titlebar():
@@ -135,6 +142,22 @@ def test_hosted_mode_brands_browser_title_without_renaming_hermes_agent_ui():
     assert "document.title=hostedDocumentAssistantName();" in UI_JS
     assert "sessionTitle+' \\u2014 '+hostedDocumentAssistantName()" in UI_JS
     assert "document.title=typeof hostedDocumentAssistantName==='function'?hostedDocumentAssistantName():name;" in BOOT_JS
+
+
+def test_hosted_mode_uses_hermes_layer_favicons():
+    favicon_svg = (STATIC / "favicon.svg").read_text(encoding="utf-8")
+    favicon_512_svg = (STATIC / "favicon-512.svg").read_text(encoding="utf-8")
+    assert 'viewBox="0 0 330 330"' in favicon_svg
+    assert "#00C5EF" in favicon_svg
+    assert "#5843E5" in favicon_svg
+    assert "#F5C542" not in favicon_svg
+    assert "#D4961C" not in favicon_svg
+    assert favicon_512_svg == favicon_svg
+    assert png_size(STATIC / "favicon-32.png") == (32, 32)
+    assert png_size(STATIC / "favicon-192.png") == (192, 192)
+    assert png_size(STATIC / "favicon-512.png") == (512, 512)
+    assert png_size(STATIC / "apple-touch-icon.png") == (512, 512)
+    assert (STATIC / "favicon.ico").read_bytes().startswith(b"\x00\x00\x01\x00")
 
 
 def test_bridge_only_adds_layer_csrf_to_agent_scoped_fetches():
