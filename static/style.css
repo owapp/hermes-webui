@@ -1311,6 +1311,15 @@
   .onboarding-check span{font-size:12px;color:var(--muted);line-height:1.5;}
   .onboarding-check.ok{border-color:var(--accent-bg);background:var(--accent-bg);}
   .onboarding-check.warn{border-color:var(--accent-bg-strong);background:var(--accent-bg);}
+  .onboarding-mode-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;}
+  .onboarding-mode-card{appearance:none;text-align:left;padding:14px;border-radius:14px;border:1px solid var(--border);background:rgba(255,255,255,.03);color:var(--text);cursor:pointer;display:flex;flex-direction:column;gap:8px;}
+  .onboarding-mode-card:hover{border-color:var(--accent-bg-strong);}
+  .onboarding-mode-card.active{border-color:var(--accent-bg-strong);background:var(--accent-bg);}
+  .onboarding-mode-card strong{font-size:13px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+  .onboarding-mode-card strong span{font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--accent-text);}
+  .onboarding-mode-card small{font-size:12px;line-height:1.5;color:var(--muted);}
+  .onboarding-managed-ai{display:flex;flex-direction:column;gap:14px;}
+  .onboarding-credit-topup{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:end;}
   .onboarding-field{display:flex;flex-direction:column;gap:6px;}
   .onboarding-field span{font-size:12px;font-weight:700;color:var(--text);}
   .onboarding-field input,.onboarding-field select{margin-bottom:0;padding:10px 12px;border-radius:10px;font-size:13px;background:var(--input-bg);border:1px solid var(--border2);color:var(--text);}
@@ -2494,6 +2503,7 @@
     .onboarding-shell{grid-template-columns:1fr;}
     .onboarding-sidebar{border-right:none;border-bottom:1px solid var(--border);padding:22px 18px;}
     .onboarding-main{padding:20px 18px 18px;}
+    .onboarding-credit-topup{grid-template-columns:1fr;}
     .onboarding-actions{flex-direction:column-reverse;}
     .onboarding-actions .sm-btn{width:100%;min-height:44px;}
     /* Login page responsive */

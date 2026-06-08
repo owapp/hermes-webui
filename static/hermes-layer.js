@@ -610,9 +610,22 @@
       '</div>';
   }
 
+  function accountAiCreditsMarkup(aiCredits){
+    if (!aiCredits) return '';
+    var available = Number(aiCredits.availableCents || 0) / 100;
+    var label = '';
+    try { label = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'EUR' }).format(available); }
+    catch (_) { label = 'EUR ' + available.toFixed(2); }
+    return '<div class="hl-account-subscription is-neutral" data-hl-ai-credits>' +
+      '<span>AI credits</span>' +
+      '<strong>' + escapeHtml(label) + '</strong>' +
+      '</div>';
+  }
+
   function renderAccountMenu(root, payload){
     var account = payload && payload.account ? payload.account : {};
     var subscription = payload && payload.subscription ? payload.subscription : {};
+    var aiCredits = payload && payload.aiCredits ? payload.aiCredits : null;
     var links = payload && Array.isArray(payload.links) ? payload.links : [];
     var initials = account.initials || 'U';
     var name = account.name || account.email || 'Account';
@@ -633,6 +646,7 @@
           '<div class="hl-account-name">' + escapeHtml(name) + '</div>' +
           '<div class="hl-account-email">' + escapeHtml(email) + '</div>' +
           accountSubscriptionMarkup(subscription) +
+          accountAiCreditsMarkup(aiCredits) +
         '</div>' +
         '<div class="hl-account-separator"></div>' +
         linkMarkup +

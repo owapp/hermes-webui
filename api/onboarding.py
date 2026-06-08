@@ -34,6 +34,21 @@ logger = logging.getLogger(__name__)
 
 
 _SUPPORTED_PROVIDER_SETUPS = {
+    "hermes-layer-managed": {
+        "label": "Managed AI credits",
+        "env_var": "HERMES_LAYER_WORKSPACE_TOKEN",
+        "default_model": os.environ.get("HERMES_LAYER_MANAGED_AI_DEFAULT_MODEL", "openrouter/auto"),
+        "default_base_url": os.environ.get("HERMES_LAYER_MANAGED_AI_BASE_URL", ""),
+        "requires_base_url": False,
+        "key_optional": True,
+        "models": [
+            {"id": os.environ.get("HERMES_LAYER_MANAGED_AI_DEFAULT_MODEL", "openrouter/auto"), "label": os.environ.get("HERMES_LAYER_MANAGED_AI_DEFAULT_MODEL", "openrouter/auto")},
+            {"id": "openrouter/auto", "label": "openrouter/auto"},
+        ],
+        "category": "managed",
+        "quick": True,
+        "managed": True,
+    },
     # ── Easy start ──────────────────────────────────────────────────────
     "openrouter": {
         "label": "OpenRouter",
@@ -190,9 +205,10 @@ _SUPPORTED_PROVIDER_SETUPS = {
 }
 
 _PROVIDER_CATEGORIES = [
-    {"id": "easy_start", "label": "Easy start", "order": 0},
-    {"id": "self_hosted", "label": "Open / self-hosted", "order": 1},
-    {"id": "specialized", "label": "Specialized", "order": 2},
+    {"id": "managed", "label": "Managed by Hermes Layer", "order": 0},
+    {"id": "easy_start", "label": "Bring your own key", "order": 1},
+    {"id": "self_hosted", "label": "Open / self-hosted", "order": 2},
+    {"id": "specialized", "label": "Specialized", "order": 3},
 ]
 
 _UNSUPPORTED_PROVIDER_NOTE = (
@@ -208,6 +224,18 @@ def _hosted_onboarding_enabled() -> bool:
         "true",
         "yes",
     }
+
+
+def _managed_ai_base_url() -> str:
+    return _normalize_base_url(os.environ.get("HERMES_LAYER_MANAGED_AI_BASE_URL", ""))
+
+
+def _managed_ai_default_model() -> str:
+    return os.environ.get("HERMES_LAYER_MANAGED_AI_DEFAULT_MODEL", "openrouter/auto").strip() or "openrouter/auto"
+
+
+def _is_managed_ai_config(provider: str, base_url: str) -> bool:
+    return provider == "custom" and bool(_managed_ai_base_url()) and _normalize_base_url(base_url) == _managed_ai_base_url()
 
 
 def _get_active_hermes_home() -> Path:
@@ -560,6 +588,8 @@ def _provider_api_key_present(
     provider: str, cfg: dict, env_values: dict[str, str]
 ) -> bool:
     provider = (provider or "").strip().lower()
+    if provider == "hermes-layer-managed":
+        return bool(os.environ.get("HERMES_LAYER_WORKSPACE_TOKEN", "").strip() and _managed_ai_base_url())
     if not provider:
         return False
 
@@ -691,6 +721,8 @@ def _status_from_runtime(cfg: dict, imports_ok: bool) -> dict:
     provider = _extract_current_provider(cfg)
     model = _extract_current_model(cfg)
     base_url = _extract_current_base_url(cfg)
+    if _is_managed_ai_config(provider, base_url):
+        provider = "hermes-layer-managed"
     env_values = _load_env_file(_get_active_hermes_home() / ".env")
 
     provider_configured = bool(provider and model)
@@ -789,26 +821,33 @@ def _build_setup_catalog(cfg: dict) -> dict:
     current_provider = _extract_current_provider(cfg) or "openrouter"
     current_model = _extract_current_model(cfg)
     current_base_url = _extract_current_base_url(cfg)
+    if _is_managed_ai_config(current_provider, current_base_url):
+        current_provider = "hermes-layer-managed"
 
     providers = []
     for provider_id, meta in _SUPPORTED_PROVIDER_SETUPS.items():
+        model_list = list(meta.get("models", []))
+        if provider_id == "hermes-layer-managed":
+            default_model = _managed_ai_default_model()
+            model_list = [{"id": default_model, "label": default_model}]
         providers.append(
             {
                 "id": provider_id,
                 "label": meta["label"],
                 "env_var": meta["env_var"],
-                "default_model": meta["default_model"],
-                "default_base_url": meta.get("default_base_url") or "",
+                "default_model": model_list[0]["id"] if provider_id == "hermes-layer-managed" and model_list else meta["default_model"],
+                "default_base_url": _managed_ai_base_url() if provider_id == "hermes-layer-managed" else meta.get("default_base_url") or "",
                 "requires_base_url": bool(meta.get("requires_base_url")),
                 # #1499 (third sub-bug from #1420) — providers that may run
                 # keyless (lmstudio, ollama, custom).  Frontend uses this to
                 # show a "(optional)" hint and allow Continue without a key.
                 "key_optional": bool(meta.get("key_optional")),
-                "models": list(meta.get("models", [])),
+                "models": model_list,
                 "category": meta.get("category", "easy_start"),
                 "quick": meta.get("quick", False),
                 "oauth_provider": meta.get("oauth_provider") or "",
                 "oauth_label": meta.get("oauth_label") or "",
+                "managed": bool(meta.get("managed")),
             }
         )
 
@@ -976,6 +1015,24 @@ def apply_onboarding_setup(body: dict) -> dict:
         raise ValueError("model is required")
 
     provider_meta = _SUPPORTED_PROVIDER_SETUPS[provider]
+    if provider == "hermes-layer-managed":
+        managed_base_url = _managed_ai_base_url()
+        if not managed_base_url:
+            raise ValueError("Managed AI gateway is not configured")
+        config_path = _get_config_path()
+        cfg = _load_yaml_config(config_path)
+        model_cfg = cfg.get("model", {})
+        if not isinstance(model_cfg, dict):
+            model_cfg = {}
+        model_cfg["provider"] = "custom"
+        model_cfg["default"] = model or _managed_ai_default_model()
+        model_cfg["base_url"] = managed_base_url
+        model_cfg["api_key"] = "${HERMES_LAYER_WORKSPACE_TOKEN}"
+        cfg["model"] = model_cfg
+        _save_yaml_config(config_path, cfg)
+        reload_config()
+        return get_onboarding_status()
+
     if provider_meta.get("requires_base_url"):
         if not base_url:
             raise ValueError("base_url is required for custom endpoints")
@@ -987,7 +1044,7 @@ def apply_onboarding_setup(body: dict) -> dict:
     # Guard: if config.yaml already exists and the caller did not explicitly
     # acknowledge the overwrite, refuse to proceed.  The frontend must pass
     # confirm_overwrite=True after showing the user a confirmation step.
-    if Path(config_path).exists() and not body.get("confirm_overwrite"):
+    if Path(config_path).exists() and not body.get("confirm_overwrite") and not _hosted_onboarding_enabled():
         return {
             "error": "config_exists",
             "message": (

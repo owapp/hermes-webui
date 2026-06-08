@@ -1,4 +1,4 @@
-const ONBOARDING={status:null,step:0,steps:['system','setup','workspace','password','finish'],form:{provider:'openrouter',workspace:'',model:'',password:'',apiKey:'',baseUrl:''},active:false,probe:{status:'idle',error:null,detail:'',models:null,probedKey:''}};
+const ONBOARDING={status:null,step:0,steps:['system','setup','workspace','password','finish'],form:{provider:'openrouter',configMode:'byok',workspace:'',model:'',password:'',apiKey:'',baseUrl:'',aiTopUpAmount:''},active:false,probe:{status:'idle',error:null,detail:'',models:null,probedKey:''},managedCredits:{config:null,state:null,loading:false,error:''}};
 
 function _isHostedOnboarding(){
   return !!(((ONBOARDING.status||{}).hosted||{}).enabled);
@@ -7,6 +7,57 @@ function _isHostedOnboarding(){
 function _hostedOnboardingReady(){
   const system=(ONBOARDING.status||{}).system||{};
   return !!system.chat_ready;
+}
+
+function _managedProviderId(){
+  return 'hermes-layer-managed';
+}
+
+function _isManagedAiProvider(provider){
+  return provider===_managedProviderId();
+}
+
+function _managedCreditsAccount(){
+  return ((ONBOARDING.managedCredits.state||{}).account)||null;
+}
+
+function _managedCreditsAvailableCents(){
+  const account=_managedCreditsAccount();
+  return account?Number(account.availableCents||0):0;
+}
+
+function _managedCreditsReady(){
+  const config=ONBOARDING.managedCredits.config||{};
+  return !!config.enabled&&_managedCreditsAvailableCents()>=Number(config.minRequestBalanceCents||1);
+}
+
+function _formatManagedCredits(cents){
+  try{return new Intl.NumberFormat('en-US',{style:'currency',currency:'EUR'}).format((Number(cents||0))/100);}catch(_){return 'EUR '+((Number(cents||0))/100).toFixed(2);}
+}
+
+async function _loadManagedCredits(){
+  if(!_isHostedOnboarding()||ONBOARDING.managedCredits.loading)return;
+  ONBOARDING.managedCredits.loading=true;
+  ONBOARDING.managedCredits.error='';
+  try{
+    const results=await Promise.all([
+      api('/api/hermes-layer/ai-credits/config'),
+      api('/api/hermes-layer/ai-credits/state')
+    ]);
+    ONBOARDING.managedCredits.config=results[0];
+    ONBOARDING.managedCredits.state=results[1];
+    if(!ONBOARDING.form.aiTopUpAmount){
+      ONBOARDING.form.aiTopUpAmount=((Number((results[0]||{}).minTopUpCents||1000))/100).toFixed(2);
+    }
+  }catch(e){
+    ONBOARDING.managedCredits.error=(e&&e.message)||String(e);
+  }finally{
+    ONBOARDING.managedCredits.loading=false;
+  }
+}
+
+function _refreshManagedCredits(){
+  _loadManagedCredits().then(_renderOnboardingBody).catch(()=>{});
 }
 
 function _configureOnboardingMode(){
@@ -147,6 +198,24 @@ function _renderProviderSelectOptions(selectedId){
   }).join('');
 }
 
+function _renderByokProviderSelectOptions(selectedId){
+  const providers=_getOnboardingSetupProviders().filter(p=>!p.managed);
+  const categories=_getOnboardingSetupCategories();
+  const provMap={};
+  providers.forEach(p=>{provMap[p.id]=p;});
+  if(!categories.length){
+    return providers.map(p=>`<option value="${esc(p.id)}">${esc(p.label)}${p.quick?' — '+esc(t('onboarding_quick_setup_badge')):''}</option>`).join('');
+  }
+  return categories.map(cat=>{
+    const opts=cat.providers.map(pid=>{
+      const p=provMap[pid];
+      if(!p)return '';
+      return `<option value="${esc(p.id)}"${p.id===selectedId?' selected':''}>${esc(p.label)}${p.quick?' — '+esc(t('onboarding_quick_setup_badge')):''}</option>`;
+    }).join('');
+    return opts?`<optgroup label="${esc(t('provider_category_'+cat.id)||cat.label)}">${opts}</optgroup>`:'';
+  }).join('');
+}
+
 function _getOnboardingCurrentSetup(){
   return (((ONBOARDING.status||{}).setup||{}).current)||{};
 }
@@ -259,6 +328,78 @@ function _renderOnboardingModelField(){
   return `<label class="onboarding-field"><span>${t('onboarding_model_label')}</span><select id="onboardingModelSelect" onchange="ONBOARDING.form.model=this.value">${options}</select></label><p class="onboarding-copy">${t('onboarding_workspace_help')}</p>`;
 }
 
+function _renderHostedProviderModeCards(){
+  const managed=ONBOARDING.form.configMode==='managed';
+  return `<div class="onboarding-mode-grid">
+    <button type="button" class="onboarding-mode-card ${managed?'active':''}" onclick="syncHostedConfigMode('managed')">
+      <strong>Managed AI credits <span>Recommended</span></strong>
+      <small>No provider account required. Usage is debited from your prepaid EUR balance.</small>
+    </button>
+    <button type="button" class="onboarding-mode-card ${!managed?'active':''}" onclick="syncHostedConfigMode('byok')">
+      <strong>Bring your own key</strong>
+      <small>Use OpenAI, Anthropic, OpenRouter, self-hosted endpoints or other WebUI providers.</small>
+    </button>
+  </div>`;
+}
+
+function _renderManagedCreditsSetup(){
+  const config=ONBOARDING.managedCredits.config||{};
+  const account=_managedCreditsAccount();
+  const available=_managedCreditsAvailableCents();
+  const loading=ONBOARDING.managedCredits.loading;
+  const error=ONBOARDING.managedCredits.error;
+  const min=Number(config.minTopUpCents||1000);
+  const max=Number(config.maxTopUpCents||50000);
+  const ready=_managedCreditsReady();
+  const amount=ONBOARDING.form.aiTopUpAmount||((min/100).toFixed(2));
+  const defaultModel=config.defaultModel||'openrouter/auto';
+  if(!ONBOARDING.form.model)ONBOARDING.form.model=defaultModel;
+  const status=loading?'Loading credits...':error?error:(ready?'Managed AI credits are ready.':'Add prepaid credits before continuing.');
+  return `<div class="onboarding-managed-ai">
+    <div class="onboarding-check ${ready?'ok':'warn'}">
+      <strong>AI credits</strong>
+      <span>${esc(status)}</span>
+    </div>
+    <div class="onboarding-summary">
+      <div><strong>Available</strong><span>${esc(_formatManagedCredits(available))}</span></div>
+      <div><strong>Minimum top-up</strong><span>${esc(_formatManagedCredits(min))}</span></div>
+      <div><strong>Maximum top-up</strong><span>${esc(_formatManagedCredits(max))}</span></div>
+    </div>
+    ${ready?'':`<div class="onboarding-credit-topup">
+      <label class="onboarding-field"><span>Top-up amount</span><input id="onboardingAiTopUpInput" type="number" min="${esc(String(min/100))}" max="${esc(String(max/100))}" step="1" value="${esc(amount)}" oninput="ONBOARDING.form.aiTopUpAmount=this.value"></label>
+      <button type="button" class="sm-btn" onclick="startManagedCreditsCheckout()" ${loading?'disabled':''}>Add AI credits</button>
+    </div>`}
+  </div>`;
+}
+
+function syncHostedConfigMode(mode){
+  ONBOARDING.form.configMode=mode==='managed'?'managed':'byok';
+  if(ONBOARDING.form.configMode==='managed'){
+    syncOnboardingProvider(_managedProviderId());
+    _refreshManagedCredits();
+  }else if(_isManagedAiProvider(ONBOARDING.form.provider)){
+    syncOnboardingProvider('openrouter');
+  }else{
+    _renderOnboardingBody();
+  }
+}
+
+async function startManagedCreditsCheckout(){
+  try{
+    const config=ONBOARDING.managedCredits.config||{};
+    const min=(Number(config.minTopUpCents||1000))/100;
+    const max=(Number(config.maxTopUpCents||50000))/100;
+    const raw=Number((($('onboardingAiTopUpInput')||{}).value)||ONBOARDING.form.aiTopUpAmount||min);
+    const amount=Math.min(max,Math.max(min,raw)).toFixed(2);
+    ONBOARDING.form.aiTopUpAmount=amount;
+    const result=await api('/api/hermes-layer/ai-credits/checkout',{method:'POST',body:JSON.stringify({amountEur:amount})});
+    if(result&&result.url)window.location.assign(result.url);
+  }catch(e){
+    ONBOARDING.managedCredits.error=(e&&e.message)||String(e);
+    _renderOnboardingBody();
+  }
+}
+
 function _renderOnboardingProviderOAuthField(provider){
   if(_isHostedOnboarding())return '';
   if(!provider||provider.oauth_provider!=='anthropic')return '';
@@ -339,6 +480,37 @@ function _renderOnboardingBody(){
           ? ''
           : `${t('onboarding_api_key_help_prefix')} ${esc(provider.env_var)}.`))
       : '';
+
+    if(_isHostedOnboarding()){
+      if(ONBOARDING.form.configMode==='managed'){
+        if(!_isManagedAiProvider(ONBOARDING.form.provider)){
+          const managedProvider=_getOnboardingSetupProvider(_managedProviderId());
+          ONBOARDING.form.provider=_managedProviderId();
+          ONBOARDING.form.model=(managedProvider&&managedProvider.default_model)||ONBOARDING.form.model||'openrouter/auto';
+          ONBOARDING.form.baseUrl=(managedProvider&&managedProvider.default_base_url)||'';
+        }
+        if(!ONBOARDING.managedCredits.config&&!ONBOARDING.managedCredits.loading)_refreshManagedCredits();
+        _setOnboardingNotice(_managedCreditsReady()?'Managed AI credits are ready.':'Add Managed AI credits before continuing.',_managedCreditsReady()?'success':'info');
+        body.innerHTML=_renderHostedProviderModeCards()+_renderManagedCreditsSetup();
+        const modelSel=$('onboardingModelSelect');
+        if(modelSel&&ONBOARDING.form.model)modelSel.value=ONBOARDING.form.model;
+        return;
+      }
+      const byokOptions=_renderByokProviderSelectOptions(_isManagedAiProvider(selectedId)?'openrouter':selectedId);
+      const byokProvider=_isManagedAiProvider(selectedId)?_getOnboardingSetupProvider('openrouter'):provider;
+      const byokShowBaseUrl=byokProvider&&byokProvider.requires_base_url;
+      _setOnboardingNotice(system.chat_ready?'Your hosted Hermes Agent is ready to chat.':'Connect a provider before using your hosted Hermes Agent.',system.chat_ready?'success':'info');
+      body.innerHTML=`
+        ${_renderHostedProviderModeCards()}
+        <label class="onboarding-field">
+          <span>${t('onboarding_provider_label')}</span>
+          <select id="onboardingProviderSelect" onchange="syncOnboardingProvider(this.value)">${byokOptions}</select>
+        </label>
+        ${_renderOnboardingApiKeyField()}
+        ${_renderOnboardingBaseUrlField(byokShowBaseUrl)}
+        ${byokShowBaseUrl?`<p class="onboarding-copy">${t('onboarding_base_url_help')}</p>`:''}`;
+      return;
+    }
 
     // OAuth provider path: configured via CLI, no API key input needed.
     const currentIsOauth=!!(ONBOARDING.status.setup||{}).current_is_oauth;
@@ -480,6 +652,9 @@ function syncOnboardingWorkspaceSelect(value){
 function syncOnboardingProvider(value){
   const provider=_getOnboardingSetupProvider(value);
   ONBOARDING.form.provider=value;
+  if(_isHostedOnboarding()){
+    ONBOARDING.form.configMode=_isManagedAiProvider(value)?'managed':'byok';
+  }
   if(provider){
     if(!ONBOARDING.form.model || !_getOnboardingProviderModelChoices().some(m=>m.id===ONBOARDING.form.model) || value==='custom'){
       ONBOARDING.form.model=provider.default_model||'';
@@ -499,7 +674,8 @@ async function loadOnboardingWizard(){
     ONBOARDING.status=status;
     _configureOnboardingMode();
     const current=((status.setup||{}).current)||{};
-    ONBOARDING.form.provider=current.provider||'openrouter';
+    ONBOARDING.form.provider=_isHostedOnboarding()?(current.provider||_managedProviderId()):(current.provider||'openrouter');
+    ONBOARDING.form.configMode=_isHostedOnboarding()&&_isManagedAiProvider(ONBOARDING.form.provider)?'managed':'byok';
     ONBOARDING.form.workspace=status.settings.default_workspace||(status.workspaces&&status.workspaces.last)||'';
     ONBOARDING.form.model=status.settings.default_model||current.model||'';
     ONBOARDING.form.password='';
@@ -508,6 +684,7 @@ async function loadOnboardingWizard(){
     ONBOARDING.active=!status.completed;
     if(!ONBOARDING.active) return false;
     _configureOnboardingMode();
+    if(_isHostedOnboarding()&&ONBOARDING.form.configMode==='managed')_refreshManagedCredits();
     $('onboardingOverlay').style.display='flex';
     _renderOnboardingSteps();
     _renderOnboardingBody();
@@ -543,6 +720,7 @@ async function _saveOnboardingProviderSetup(){
   const body={provider,model};
   if(apiKey) body.api_key=apiKey;
   if(baseUrl) body.base_url=baseUrl;
+  if(_isHostedOnboarding()) body.confirm_overwrite=true;
   const status=await api('/api/onboarding/setup',{method:'POST',body:JSON.stringify(body)});
   ONBOARDING.status=status;
 }
@@ -607,6 +785,9 @@ async function nextOnboardingStep(){
       ONBOARDING.form.apiKey=(($('onboardingApiKeyInput')||{}).value||'').trim();
       ONBOARDING.form.baseUrl=(($('onboardingBaseUrlInput')||{}).value||ONBOARDING.form.baseUrl||'').trim();
       if(!ONBOARDING.form.provider) throw new Error(t('onboarding_error_provider_required'));
+      if(_isHostedOnboarding()&&_isManagedAiProvider(ONBOARDING.form.provider)&&!_managedCreditsReady()){
+        throw new Error('Add Managed AI credits before continuing.');
+      }
       if(ONBOARDING.form.provider==='custom' && !ONBOARDING.form.baseUrl) throw new Error(t('onboarding_error_base_url_required'));
       // For self-hosted providers (requires_base_url=True), gate Continue on a
       // successful probe of <base_url>/models — otherwise the wizard would
