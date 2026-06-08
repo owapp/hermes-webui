@@ -502,6 +502,7 @@ function _dashboardBrowserUrl(status){
   return source.protocol+'//'+displayHost+':'+status.port;
 }
 function _applyDashboardStatus(status){
+  if(window.__hermesLayerHosted) return;
   const running=!!(status&&status.running);
   const url=running?_dashboardBrowserUrl(status):'';
   const warning=running&&!_dashboardIsBrowserLoopback()?t('dashboard_loopback_warning'):'';
@@ -523,6 +524,7 @@ function _applyDashboardStatus(status){
   });
 }
 async function refreshDashboardStatus(force=false){
+  if(window.__hermesLayerHosted) return {running:false};
   const now=Date.now();
   if(!force&&_dashboardStatusCache&&(now-_dashboardStatusFetchedAt)<DASHBOARD_STATUS_TTL_MS){
     _applyDashboardStatus(_dashboardStatusCache);
@@ -539,6 +541,7 @@ async function refreshDashboardStatus(force=false){
   return _dashboardStatusCache;
 }
 async function loadDashboardSettings(){
+  if(window.__hermesLayerHosted) return;
   const modeEl=$('settingsDashboardMode');
   const urlEl=$('settingsDashboardUrl');
   if(!modeEl&&!urlEl) return;
@@ -549,6 +552,7 @@ async function loadDashboardSettings(){
   }catch(_){/* leave defaults visible */}
 }
 async function saveDashboardSettings(){
+  if(window.__hermesLayerHosted) return;
   const modeEl=$('settingsDashboardMode');
   const urlEl=$('settingsDashboardUrl');
   const statusEl=$('settingsDashboardStatus');
@@ -565,6 +569,10 @@ async function saveDashboardSettings(){
   }
 }
 function openHermesDashboard(event){
+  if(window.__hermesLayerHosted) {
+    if(event){event.preventDefault();event.stopPropagation();}
+    return false;
+  }
   if(event){event.preventDefault();event.stopPropagation();}
   const btn=event&&event.currentTarget?event.currentTarget:document.querySelector('[data-dashboard-link]');
   const url=(btn&&btn.dataset&&btn.dataset.dashboardUrl)||_dashboardBrowserUrl(_dashboardStatusCache);
@@ -573,6 +581,7 @@ function openHermesDashboard(event){
   return false;
 }
 function _initDashboardLinkProbe(){
+  if(window.__hermesLayerHosted) return;
   loadDashboardSettings();
   refreshDashboardStatus(true);
   setInterval(refreshDashboardStatus,DASHBOARD_STATUS_TTL_MS);
@@ -10488,25 +10497,27 @@ function _showWorkspaceRootContextMenu(e){
   menu.style.left=(e.clientX+160>vw?e.clientX-170:e.clientX)+'px';
   menu.style.top=(e.clientY+80>vh?e.clientY-80:e.clientY)+'px';
 
-  menu.appendChild(_workspaceContextMenuItem(t('reveal_in_finder'),async()=>{
-    menu.remove();
-    try{await api('/api/file/reveal',{method:'POST',body:JSON.stringify({session_id:S.session.session_id,path:'.'})});}
-    catch(err){showToast(t('reveal_failed')+(err.message||err));}
-  }));
+  if(!window.__hermesLayerHosted){
+    menu.appendChild(_workspaceContextMenuItem(t('reveal_in_finder'),async()=>{
+      menu.remove();
+      try{await api('/api/file/reveal',{method:'POST',body:JSON.stringify({session_id:S.session.session_id,path:'.'})});}
+      catch(err){showToast(t('reveal_failed')+(err.message||err));}
+    }));
 
-  menu.appendChild(_workspaceContextMenuItem(t('open_in_vscode'),async()=>{
-    menu.remove();
-    try{await api('/api/file/open-vscode',{method:'POST',body:JSON.stringify({session_id:S.session.session_id,path:'.'})});}
-    catch(err){showToast(t('open_in_vscode_failed')+(err.message||err));}
-  }));
+    menu.appendChild(_workspaceContextMenuItem(t('open_in_vscode'),async()=>{
+      menu.remove();
+      try{await api('/api/file/open-vscode',{method:'POST',body:JSON.stringify({session_id:S.session.session_id,path:'.'})});}
+      catch(err){showToast(t('open_in_vscode_failed')+(err.message||err));}
+    }));
 
-  menu.appendChild(_workspaceContextMenuItem(t('copy_file_path'),async()=>{
-    menu.remove();
-    try{
-      const r=await api('/api/file/path',{method:'POST',body:JSON.stringify({session_id:S.session.session_id,path:'.'})});
-      await _copyTextWithFallback((r&&r.path)||'.',t('path_copied'),t('path_copy_failed'));
-    }catch(err){showToast(t('path_copy_failed')+(err.message||err));}
-  }));
+    menu.appendChild(_workspaceContextMenuItem(t('copy_file_path'),async()=>{
+      menu.remove();
+      try{
+        const r=await api('/api/file/path',{method:'POST',body:JSON.stringify({session_id:S.session.session_id,path:'.'})});
+        await _copyTextWithFallback((r&&r.path)||'.',t('path_copied'),t('path_copy_failed'));
+      }catch(err){showToast(t('path_copy_failed')+(err.message||err));}
+    }));
+  }
 
   document.body.appendChild(menu);
   const dismiss=()=>{menu.remove();document.removeEventListener('click',dismiss);};
@@ -10834,63 +10845,61 @@ function _showFileContextMenu(e, item){
   renameItem.onclick=()=>{menu.remove();_inlineRenameFileItem(item);};
   menu.appendChild(renameItem);
 
-  // Reveal in File Manager
-  const revealItem=document.createElement('div');
-  revealItem.textContent=t('reveal_in_finder');
-  revealItem.style.cssText='padding:7px 14px;cursor:pointer;font-size:13px;color:var(--text);';
-  revealItem.onmouseenter=()=>revealItem.style.background='var(--hover-bg)';
-  revealItem.onmouseleave=()=>revealItem.style.background='';
-  revealItem.onclick=async()=>{menu.remove();try{await api('/api/file/reveal',{method:'POST',body:JSON.stringify({session_id:S.session.session_id,path:item.path})});}catch(err){showToast(t('reveal_failed')+(err.message||err));}};
-  menu.appendChild(revealItem);
+  if(!window.__hermesLayerHosted){
+    // Reveal in File Manager
+    const revealItem=document.createElement('div');
+    revealItem.textContent=t('reveal_in_finder');
+    revealItem.style.cssText='padding:7px 14px;cursor:pointer;font-size:13px;color:var(--text);';
+    revealItem.onmouseenter=()=>revealItem.style.background='var(--hover-bg)';
+    revealItem.onmouseleave=()=>revealItem.style.background='';
+    revealItem.onclick=async()=>{menu.remove();try{await api('/api/file/reveal',{method:'POST',body:JSON.stringify({session_id:S.session.session_id,path:item.path})});}catch(err){showToast(t('reveal_failed')+(err.message||err));}};
+    menu.appendChild(revealItem);
 
-  // Open in VS Code (#2735)
-  const vscodeItem=document.createElement('div');
-  vscodeItem.textContent=t('open_in_vscode');
-  vscodeItem.style.cssText='padding:7px 14px;cursor:pointer;font-size:13px;color:var(--text);';
-  vscodeItem.onmouseenter=()=>vscodeItem.style.background='var(--hover-bg)';
-  vscodeItem.onmouseleave=()=>vscodeItem.style.background='';
-  vscodeItem.onclick=async()=>{menu.remove();try{await api('/api/file/open-vscode',{method:'POST',body:JSON.stringify({session_id:S.session.session_id,path:item.path})});}catch(err){showToast(t('open_in_vscode_failed')+(err.message||err));}};
-  menu.appendChild(vscodeItem);
+    // Open in VS Code (#2735)
+    const vscodeItem=document.createElement('div');
+    vscodeItem.textContent=t('open_in_vscode');
+    vscodeItem.style.cssText='padding:7px 14px;cursor:pointer;font-size:13px;color:var(--text);';
+    vscodeItem.onmouseenter=()=>vscodeItem.style.background='var(--hover-bg)';
+    vscodeItem.onmouseleave=()=>vscodeItem.style.background='';
+    vscodeItem.onclick=async()=>{menu.remove();try{await api('/api/file/open-vscode',{method:'POST',body:JSON.stringify({session_id:S.session.session_id,path:item.path})});}catch(err){showToast(t('open_in_vscode_failed')+(err.message||err));}};
+    menu.appendChild(vscodeItem);
 
-  // Copy file path — resolves the absolute on-disk path on the server (so the
-  // user gets the full /home/.../workspace/foo.py rather than the relative
-  // path the file tree shows) and writes it to the OS clipboard. Useful for
-  // pasting into terminals, editors, or other apps without taking the slower
-  // Reveal-in-Finder round trip.
-  const copyPathItem=document.createElement('div');
-  copyPathItem.textContent=t('copy_file_path');
-  copyPathItem.style.cssText='padding:7px 14px;cursor:pointer;font-size:13px;color:var(--text);';
-  copyPathItem.onmouseenter=()=>copyPathItem.style.background='var(--hover-bg)';
-  copyPathItem.onmouseleave=()=>copyPathItem.style.background='';
-  copyPathItem.onclick=async()=>{
-    menu.remove();
-    try{
-      const r=await api('/api/file/path',{method:'POST',body:JSON.stringify({session_id:S.session.session_id,path:item.path})});
-      const abs=(r&&r.path)||item.path;
+    // Copy file path resolves an absolute on-disk path and is therefore hidden in hosted workspaces.
+    const copyPathItem=document.createElement('div');
+    copyPathItem.textContent=t('copy_file_path');
+    copyPathItem.style.cssText='padding:7px 14px;cursor:pointer;font-size:13px;color:var(--text);';
+    copyPathItem.onmouseenter=()=>copyPathItem.style.background='var(--hover-bg)';
+    copyPathItem.onmouseleave=()=>copyPathItem.style.background='';
+    copyPathItem.onclick=async()=>{
+      menu.remove();
       try{
-        await navigator.clipboard.writeText(abs);
-        showToast(t('path_copied'));
-      }catch(clipErr){
-        // Fallback for browsers where Clipboard API is gated (older Safari,
-        // non-secure contexts). Use the legacy execCommand path against a
-        // hidden textarea — this is the same pattern boot.js uses for the
-        // "Copy" buttons on code blocks.
-        const ta=document.createElement('textarea');
-        ta.value=abs;
-        ta.style.cssText='position:fixed;left:-9999px;top:-9999px;';
-        document.body.appendChild(ta);
-        ta.select();
-        let copied=false;
-        try{copied=document.execCommand('copy');}catch(_){}
-        ta.remove();
-        if(copied) showToast(t('path_copied'));
-        else showToast(t('path_copy_failed')+(clipErr&&clipErr.message?clipErr.message:String(clipErr)));
+        const r=await api('/api/file/path',{method:'POST',body:JSON.stringify({session_id:S.session.session_id,path:item.path})});
+        const abs=(r&&r.path)||item.path;
+        try{
+          await navigator.clipboard.writeText(abs);
+          showToast(t('path_copied'));
+        }catch(clipErr){
+          // Fallback for browsers where Clipboard API is gated (older Safari,
+          // non-secure contexts). Use the legacy execCommand path against a
+          // hidden textarea - this is the same pattern boot.js uses for the
+          // "Copy" buttons on code blocks.
+          const ta=document.createElement('textarea');
+          ta.value=abs;
+          ta.style.cssText='position:fixed;left:-9999px;top:-9999px;';
+          document.body.appendChild(ta);
+          ta.select();
+          let copied=false;
+          try{copied=document.execCommand('copy');}catch(_){}
+          ta.remove();
+          if(copied) showToast(t('path_copied'));
+          else showToast(t('path_copy_failed')+(clipErr&&clipErr.message?clipErr.message:String(clipErr)));
+        }
+      }catch(err){
+        showToast(t('path_copy_failed')+(err.message||err));
       }
-    }catch(err){
-      showToast(t('path_copy_failed')+(err.message||err));
-    }
-  };
-  menu.appendChild(copyPathItem);
+    };
+    menu.appendChild(copyPathItem);
+  }
 
   // Download as zip — only for directories. Streams the folder contents
   // through /api/folder/download which builds the zip on the fly.

@@ -6152,12 +6152,14 @@ function _preferencesPayloadFromUi(){
   if(showPreviousMessagingCb) payload.show_previous_messaging_sessions=showPreviousMessagingCb.checked;
   const syncCb=$('settingsSyncInsights');
   if(syncCb) payload.sync_to_insights=syncCb.checked;
-  const updateCb=$('settingsCheckUpdates');
-  if(updateCb) payload.check_for_updates=updateCb.checked;
-  const ignoreAgentUpdatesCb=$('settingsIgnoreAgentUpdates');
-  if(ignoreAgentUpdatesCb) payload.ignore_agent_updates=ignoreAgentUpdatesCb.checked;
-  const whatsNewSummaryCb=$('settingsWhatsNewSummary');
-  if(whatsNewSummaryCb) payload.whats_new_summary_enabled=whatsNewSummaryCb.checked;
+  if(!window.__hermesLayerHosted){
+    const updateCb=$('settingsCheckUpdates');
+    if(updateCb) payload.check_for_updates=updateCb.checked;
+    const ignoreAgentUpdatesCb=$('settingsIgnoreAgentUpdates');
+    if(ignoreAgentUpdatesCb) payload.ignore_agent_updates=ignoreAgentUpdatesCb.checked;
+    const whatsNewSummaryCb=$('settingsWhatsNewSummary');
+    if(whatsNewSummaryCb) payload.whats_new_summary_enabled=whatsNewSummaryCb.checked;
+  }
   const soundCb=$('settingsSoundEnabled');
   if(soundCb) payload.sound_enabled=soundCb.checked;
   const rtlCb=$('settingsRtl');
@@ -6479,12 +6481,14 @@ async function loadSettingsPanel(){
     if(showPreviousMessagingCb){showPreviousMessagingCb.checked=!!settings.show_previous_messaging_sessions;showPreviousMessagingCb.addEventListener('change',_schedulePreferencesAutosave,{once:false});}
     const syncCb=$('settingsSyncInsights');
     if(syncCb){syncCb.checked=!!settings.sync_to_insights;syncCb.addEventListener('change',_schedulePreferencesAutosave,{once:false});}
-    const updateCb=$('settingsCheckUpdates');
-    if(updateCb){updateCb.checked=settings.check_for_updates!==false;updateCb.addEventListener('change',_schedulePreferencesAutosave,{once:false});}
-    const ignoreAgentUpdatesCb=$('settingsIgnoreAgentUpdates');
-    if(ignoreAgentUpdatesCb){ignoreAgentUpdatesCb.checked=!!settings.ignore_agent_updates;ignoreAgentUpdatesCb.addEventListener('change',_schedulePreferencesAutosave,{once:false});}
-    const whatsNewSummaryCb=$('settingsWhatsNewSummary');
-    if(whatsNewSummaryCb){whatsNewSummaryCb.checked=!!settings.whats_new_summary_enabled;whatsNewSummaryCb.addEventListener('change',_schedulePreferencesAutosave,{once:false});}
+    if(!window.__hermesLayerHosted){
+      const updateCb=$('settingsCheckUpdates');
+      if(updateCb){updateCb.checked=settings.check_for_updates!==false;updateCb.addEventListener('change',_schedulePreferencesAutosave,{once:false});}
+      const ignoreAgentUpdatesCb=$('settingsIgnoreAgentUpdates');
+      if(ignoreAgentUpdatesCb){ignoreAgentUpdatesCb.checked=!!settings.ignore_agent_updates;ignoreAgentUpdatesCb.addEventListener('change',_schedulePreferencesAutosave,{once:false});}
+      const whatsNewSummaryCb=$('settingsWhatsNewSummary');
+      if(whatsNewSummaryCb){whatsNewSummaryCb.checked=!!settings.whats_new_summary_enabled;whatsNewSummaryCb.addEventListener('change',_schedulePreferencesAutosave,{once:false});}
+    }
     const soundCb=$('settingsSoundEnabled');
     if(soundCb){soundCb.checked=!!settings.sound_enabled;soundCb.addEventListener('change',_schedulePreferencesAutosave,{once:false});}
     // Right-to-left chat layout (#1721 salvage) — Settings-only, no composer button.
@@ -6621,38 +6625,42 @@ async function loadSettingsPanel(){
         botNameTimer=setTimeout(_schedulePreferencesAutosave,500);
       },{once:false});
     }
-    // Password field: always blank (we don't send hash back)
-    const pwField=$('settingsPassword');
-    if(pwField){pwField.value='';pwField.addEventListener('input',_markSettingsDirty,{once:false});}
-    // #1560: when HERMES_WEBUI_PASSWORD env var is set, the settings password
-    // field silently no-ops. Disable it + reveal the lock banner so the UI
-    // tells the truth before a user tries (and the backend now also returns
-    // 409 as defense-in-depth).
-    const pwEnvLocked=!!settings.password_env_var;
-    _settingsPasswordEnvLocked=pwEnvLocked;
-    const pwLockBanner=$('settingsPasswordEnvLock');
-    if(pwField){
-      pwField.disabled=pwEnvLocked;
-      if(pwEnvLocked){
-        pwField.value='';
-        pwField.placeholder=t('password_env_var_locked_placeholder')||pwField.placeholder;
+    if(!window.__hermesLayerHosted){
+      // Password field: always blank (we don't send hash back)
+      const pwField=$('settingsPassword');
+      if(pwField){pwField.value='';pwField.addEventListener('input',_markSettingsDirty,{once:false});}
+      // #1560: when HERMES_WEBUI_PASSWORD env var is set, the settings password
+      // field silently no-ops. Disable it + reveal the lock banner so the UI
+      // tells the truth before a user tries (and the backend now also returns
+      // 409 as defense-in-depth).
+      const pwEnvLocked=!!settings.password_env_var;
+      _settingsPasswordEnvLocked=pwEnvLocked;
+      const pwLockBanner=$('settingsPasswordEnvLock');
+      if(pwField){
+        pwField.disabled=pwEnvLocked;
+        if(pwEnvLocked){
+          pwField.value='';
+          pwField.placeholder=t('password_env_var_locked_placeholder')||pwField.placeholder;
+        }
       }
-    }
-    if(pwLockBanner) pwLockBanner.style.display=pwEnvLocked?'block':'none';
-    // Show auth buttons only when auth is active
-    try{
-      const authStatus=await api('/api/auth/status');
-      _setSettingsAuthButtonsVisible(!!authStatus.auth_enabled);
-      _syncPasswordlessButton(authStatus);
-    }catch(e){}
-    loadPasskeys();
-    // #1560: env-var-locked password also disables the Disable Auth button —
-    // clearing settings.password_hash is silent no-op when the env var is set,
-    // and the backend now returns 409 anyway, so don't offer the action.
-    // Sign Out remains available since it only clears the session cookie.
-    if(pwEnvLocked){
-      const disableBtn=$('btnDisableAuth');
-      if(disableBtn) disableBtn.style.display='none';
+      if(pwLockBanner) pwLockBanner.style.display=pwEnvLocked?'block':'none';
+      // Show auth buttons only when auth is active
+      try{
+        const authStatus=await api('/api/auth/status');
+        _setSettingsAuthButtonsVisible(!!authStatus.auth_enabled);
+        _syncPasswordlessButton(authStatus);
+      }catch(e){}
+      loadPasskeys();
+      // #1560: env-var-locked password also disables the Disable Auth button -
+      // clearing settings.password_hash is silent no-op when the env var is set,
+      // and the backend now returns 409 anyway, so don't offer the action.
+      // Sign Out remains available since it only clears the session cookie.
+      if(pwEnvLocked){
+        const disableBtn=$('btnDisableAuth');
+        if(disableBtn) disableBtn.style.display='none';
+      }
+    }else{
+      _settingsPasswordEnvLocked=true;
     }
     _syncHermesPanelSessionActions();
     if(typeof loadDashboardSettings==='function') loadDashboardSettings();
@@ -7451,6 +7459,7 @@ function _bytesToB64u(buf){
 }
 
 async function loadPasskeys(){
+  if(window.__hermesLayerHosted) return;
   const list=$('passkeyList');
   const block=$('passkeysSettingsBlock');
   if(!list) return;
@@ -7488,6 +7497,7 @@ async function loadPasskeys(){
 }
 
 async function registerPasskey(){
+  if(window.__hermesLayerHosted) return;
   if(!window.PublicKeyCredential||!navigator.credentials){showToast('Passkeys require a supported browser and secure context.');return;}
   const label='This device';
   try{
@@ -7509,6 +7519,7 @@ async function registerPasskey(){
 }
 
 async function deletePasskey(id){
+  if(window.__hermesLayerHosted) return;
   const ok=await showConfirmDialog({title:'Remove passkey?',message:'This browser/device will no longer be able to sign in with that passkey.',confirmLabel:'Remove',danger:true,focusCancel:true});
   if(!ok) return;
   try{await api('/api/auth/passkey/delete',{method:'POST',body:JSON.stringify({id})});showToast('Passkey removed');loadPasskeys();try{_syncPasswordlessButton(await api('/api/auth/status'));}catch(_e){}}
@@ -7560,6 +7571,7 @@ function _applySavedSettingsUi(saved, body, opts){
 }
 
 async function checkUpdatesNow(){
+  if(window.__hermesLayerHosted) return;
   const btn=$('btnCheckUpdatesNow');
   const label=$('checkUpdatesLabel');
   const spinner=$('checkUpdatesSpinner');
@@ -7880,9 +7892,11 @@ async function saveSettings(andClose){
   body.show_previous_messaging_sessions=showPreviousMessagingSessions;
   body.pinned_sessions_limit=pinnedSessionsLimit;
   body.sync_to_insights=!!($('settingsSyncInsights')||{}).checked;
-  body.check_for_updates=!!($('settingsCheckUpdates')||{}).checked;
-  body.ignore_agent_updates=!!($('settingsIgnoreAgentUpdates')||{}).checked;
-  body.whats_new_summary_enabled=!!($('settingsWhatsNewSummary')||{}).checked;
+  if(!window.__hermesLayerHosted){
+    body.check_for_updates=!!($('settingsCheckUpdates')||{}).checked;
+    body.ignore_agent_updates=!!($('settingsIgnoreAgentUpdates')||{}).checked;
+    body.whats_new_summary_enabled=!!($('settingsWhatsNewSummary')||{}).checked;
+  }
   body.sound_enabled=!!($('settingsSoundEnabled')||{}).checked;
   body.rtl=!!($('settingsRtl')||{}).checked;
   body.notifications_enabled=!!($('settingsNotificationsEnabled')||{}).checked;
@@ -7893,7 +7907,7 @@ async function saveSettings(andClose){
   const botName=(($('settingsBotName')||{}).value||'').trim();
   body.bot_name=botName||'Hermes';
   // Password: only act if the field has content; blank = leave auth unchanged
-  if(pw && pw.trim()){
+  if(!window.__hermesLayerHosted && pw && pw.trim()){
     try{
       const saved=await api('/api/settings',{method:'POST',body:JSON.stringify({...body,_set_password:pw.trim()})});
       if(modelChanged && model){
@@ -7935,6 +7949,7 @@ async function saveSettings(andClose){
 }
 
 async function signOut(){
+  if(window.__hermesLayerHosted) return;
   try{
     await api('/api/auth/logout',{method:'POST',body:'{}'});
     window.location.href='login';
@@ -7944,6 +7959,7 @@ async function signOut(){
 }
 
 async function goPasswordless(){
+  if(window.__hermesLayerHosted) return;
   const ok=await showConfirmDialog({title:'Go passwordless?',message:'This removes the password and keeps passkey sign-in enabled. Keep at least one passkey registered or you could lose access.',confirmLabel:'Go passwordless',danger:false,focusCancel:true});
   if(!ok) return;
   try{
@@ -7956,6 +7972,7 @@ async function goPasswordless(){
 }
 
 async function disableAuth(){
+  if(window.__hermesLayerHosted) return;
   const _disAuth=await showConfirmDialog({title:t('disable_auth_confirm_title'),message:t('disable_auth_confirm_message'),confirmLabel:t('disable'),danger:true,focusCancel:true});
   if(!_disAuth) return;
   try{

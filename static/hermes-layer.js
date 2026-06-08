@@ -3,6 +3,7 @@
 
   if (window.__hermesLayerBridge) return;
   window.__hermesLayerBridge = true;
+  window.__hermesLayerHosted = true;
 
   var originalFetch = window.fetch && window.fetch.bind(window);
   var OriginalEventSource = window.EventSource;
