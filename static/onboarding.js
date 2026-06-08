@@ -328,7 +328,7 @@ function _renderOnboardingBody(){
       ? (provider.id==='anthropic'
         ? 'Anthropic API key path: paste an Anthropic Console API key here. This is separate from a Claude Code subscription; use the Claude Code OAuth card if you want subscription credentials instead.'
         : (_isHostedOnboarding()
-          ? 'Stored only inside this isolated hosted Hermes workspace.'
+          ? ''
           : `${t('onboarding_api_key_help_prefix')} ${esc(provider.env_var)}.`))
       : '';
 
@@ -358,7 +358,7 @@ function _renderOnboardingBody(){
           </label>
           ${_renderOnboardingApiKeyField()}
           ${_renderOnboardingBaseUrlField(showBaseUrl)}
-          <p class="onboarding-copy">${keyHelp}</p>`;
+          ${keyHelp?`<p class="onboarding-copy">${keyHelp}</p>`:''}`;
       } else {
         _setOnboardingNotice(t('onboarding_notice_setup_required'),'warn');
         body.innerHTML=`
@@ -377,7 +377,7 @@ function _renderOnboardingBody(){
           </label>
           ${_renderOnboardingApiKeyField()}
           ${_renderOnboardingBaseUrlField(showBaseUrl)}
-          <p class="onboarding-copy">${keyHelp}</p>`;
+          ${keyHelp?`<p class="onboarding-copy">${keyHelp}</p>`:''}`;
       }
       return;
     }
@@ -396,7 +396,7 @@ function _renderOnboardingBody(){
       ${_renderOnboardingApiKeyField()}
       ${_renderOnboardingProviderOAuthField(provider)}
       ${_renderOnboardingBaseUrlField(showBaseUrl)}
-      <p class="onboarding-copy">${keyHelp}</p>
+      ${keyHelp?`<p class="onboarding-copy">${keyHelp}</p>`:''}
       ${showBaseUrl?`<p class="onboarding-copy">${t('onboarding_base_url_help')}</p>`:''}
       <p class="onboarding-copy">${esc(setup.unsupported_note||'')||''}</p>`;
     return;
