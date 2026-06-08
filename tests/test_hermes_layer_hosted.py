@@ -79,6 +79,24 @@ def test_hermes_layer_bridge_owns_account_billing_backups_support_and_headroom_r
         assert f"'{action}'" in HERMES_LAYER_JS or f'"{action}"' in HERMES_LAYER_JS
 
 
+def test_account_menu_is_avatar_based_not_a_brand_overlay_button():
+    assert '<button class="hl-account-avatar"' in HERMES_LAYER_JS
+    assert 'aria-label="Account menu"' in HERMES_LAYER_JS
+    assert 'data-hl-account-menu hidden role="menu"' in HERMES_LAYER_JS
+    assert 'data-hl-account-button' in HERMES_LAYER_JS
+    assert 'data-hl-account-logout' in HERMES_LAYER_JS
+    assert 'Hermes Layer</button>' not in HERMES_LAYER_JS
+    assert 'data-hl-action="' in HERMES_LAYER_JS
+
+
+def test_hosted_bridge_does_not_integrate_webui_through_iframe_or_proxy_dom_patch():
+    lowered = HERMES_LAYER_JS.lower()
+    assert "iframe" not in lowered
+    assert "contentdocument" not in lowered
+    assert "srcdoc" not in lowered
+    assert "mutationobserver" not in lowered
+
+
 def test_headroom_history_is_rendered_as_redacted_metrics_not_raw_json():
     assert "JSON.stringify(stats.history" not in HERMES_LAYER_JS
     assert "hl-surface-table" in HERMES_LAYER_JS
