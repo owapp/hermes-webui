@@ -89,6 +89,21 @@ def test_account_menu_is_avatar_based_not_a_brand_overlay_button():
     assert 'data-hl-action="' in HERMES_LAYER_JS
 
 
+def test_hosted_layer_surfaces_use_agent_language_not_infra_labels():
+    assert "Control your hosted Hermes Agent through Hermes Layer." in HERMES_LAYER_JS
+    assert "Agent service" in HERMES_LAYER_JS
+    assert "Current agent data will be replaced." in HERMES_LAYER_JS
+    assert "Optimizer service" in HERMES_LAYER_JS
+    assert "Context engine" in HERMES_LAYER_JS
+    assert "Tool bridge" in HERMES_LAYER_JS
+    assert "Control your hosted Hermes Agent runtime" not in HERMES_LAYER_JS
+    assert "Current runtime data will be replaced." not in HERMES_LAYER_JS
+    assert "statusItem('Runtime'" not in HERMES_LAYER_JS
+    assert "statusItem('Sidecar'" not in HERMES_LAYER_JS
+    assert "statusItem('Plugin'" not in HERMES_LAYER_JS
+    assert "statusItem('MCP'" not in HERMES_LAYER_JS
+
+
 def test_hosted_bridge_does_not_integrate_webui_through_iframe_or_proxy_dom_patch():
     lowered = HERMES_LAYER_JS.lower()
     assert "iframe" not in lowered

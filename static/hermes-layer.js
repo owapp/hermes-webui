@@ -307,7 +307,7 @@
   function openWorkspaceSurface(message){
     surfaceShell(
       'Agent status',
-      'Control your hosted Hermes Agent runtime through Hermes Layer.',
+      'Control your hosted Hermes Agent through Hermes Layer.',
       '<div class="hl-surface-muted">Loading...</div>',
       true
     );
@@ -316,7 +316,7 @@
     }).catch(function(error){
       surfaceShell(
         'Agent status',
-        'Control your hosted Hermes Agent runtime through Hermes Layer.',
+        'Control your hosted Hermes Agent through Hermes Layer.',
         '<div class="hl-surface-alert">' + escapeHtml(error.message || 'Agent status failed.') + '</div>',
         false
       );
@@ -403,7 +403,7 @@
         '<button class="hl-surface-button" type="button" data-hl-refresh-workspace ' + (busy ? 'disabled' : '') + '>Refresh</button>' +
       '</div>' +
       '<div class="hl-surface-status-grid">' +
-        statusItem('Runtime', state, ['running', 'stopped'].indexOf(state) >= 0) +
+        statusItem('Agent service', state, ['running', 'stopped'].indexOf(state) >= 0) +
         statusItem('Health', health, health === 'healthy' || state === 'stopped') +
         statusItem('Billing access', 'active', true) +
         statusItem('Control plane', 'managed', true) +
@@ -423,7 +423,7 @@
       '</div>';
     var root = surfaceShell(
       'Agent status',
-      'Control your hosted Hermes Agent runtime through Hermes Layer.',
+      'Control your hosted Hermes Agent through Hermes Layer.',
       body,
       busy
     );
@@ -724,7 +724,7 @@
       button.addEventListener('click', function(){
         var backupId = button.getAttribute('data-hl-restore-backup') || '';
         if (!backupId) return;
-        if (!window.confirm('Restore this workspace from backup ' + backupId + '? Current runtime data will be replaced.')) return;
+        if (!window.confirm('Restore this workspace from backup ' + backupId + '? Current agent data will be replaced.')) return;
         renderBackupsSurface(backups, true, 'Restoring backup...');
         agentApiJson('api/hermes-layer/restore', {
           method: 'POST',
@@ -759,14 +759,14 @@
     }).join('');
     var body =
       '<div class="hl-surface-row">' +
-        '<div><h3>Context optimization</h3><p>Uses Headroom through the Hermes context engine and MCP server.</p></div>' +
+        '<div><h3>Context optimization</h3><p>Uses Headroom inside this hosted agent to reduce context size before model calls.</p></div>' +
         '<label class="hl-switch"><input type="checkbox" data-hl-headroom-toggle ' + (enabled ? 'checked' : '') + ' ' + (saving ? 'disabled' : '') + '><span></span><b>' + (enabled ? 'Enabled' : 'Disabled') + '</b></label>' +
       '</div>' +
       '<div class="hl-surface-status-grid">' +
-        statusItem('Runtime', runtime.status || 'unknown', ['healthy', 'disabled'].indexOf(runtime.status || '') >= 0) +
-        statusItem('Sidecar', runtime.sidecarHealthy ? 'healthy' : 'unhealthy', !!runtime.sidecarHealthy) +
-        statusItem('Plugin', runtime.pluginConfigured ? 'configured' : 'missing', !!runtime.pluginConfigured) +
-        statusItem('MCP', runtime.mcpConfigured ? 'configured' : 'missing', !!runtime.mcpConfigured) +
+        statusItem('Optimization', runtime.status || 'unknown', ['healthy', 'disabled'].indexOf(runtime.status || '') >= 0) +
+        statusItem('Optimizer service', runtime.sidecarHealthy ? 'healthy' : 'unhealthy', !!runtime.sidecarHealthy) +
+        statusItem('Context engine', runtime.pluginConfigured ? 'configured' : 'missing', !!runtime.pluginConfigured) +
+        statusItem('Tool bridge', runtime.mcpConfigured ? 'configured' : 'missing', !!runtime.mcpConfigured) +
       '</div>' +
       (runtime.message ? '<div class="hl-surface-alert">' + escapeHtml(runtime.message) + '</div>' : '') +
       '<div class="hl-surface-metrics">' +
