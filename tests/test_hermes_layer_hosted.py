@@ -62,6 +62,7 @@ def test_hermes_layer_bridge_owns_account_billing_backups_support_and_headroom_r
         "api/hermes-layer/account",
         "api/hermes-layer/account/profile",
         "api/hermes-layer/account/password",
+        "api/hermes-layer/logout",
         "api/hermes-layer/billing/config",
         "api/hermes-layer/billing/state",
         "api/hermes-layer/billing/checkout",
@@ -73,7 +74,6 @@ def test_hermes_layer_bridge_owns_account_billing_backups_support_and_headroom_r
         "api/hermes-layer/support/tickets",
         "api/hermes-layer/headroom",
         "api/hermes-layer/headroom/stats",
-        "api/auth/logout",
     ]
     for route in required_routes:
         assert route in HERMES_LAYER_JS
@@ -95,6 +95,8 @@ def test_account_menu_is_avatar_based_not_a_brand_overlay_button():
     assert 'data-hl-account-menu hidden role="menu"' in HERMES_LAYER_JS
     assert 'data-hl-account-button' in HERMES_LAYER_JS
     assert 'data-hl-account-logout' in HERMES_LAYER_JS
+    assert "agentApiJson('api/hermes-layer/logout', { method: 'POST' })" in HERMES_LAYER_JS
+    assert "controlPlaneUrl('/api/auth/logout')" not in HERMES_LAYER_JS
     assert 'Hermes Layer</button>' not in HERMES_LAYER_JS
     assert 'data-hl-action="' in HERMES_LAYER_JS
 

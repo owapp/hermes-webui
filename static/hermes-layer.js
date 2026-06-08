@@ -905,12 +905,7 @@
     }
     if (logout && originalFetch) {
       logout.addEventListener('click', function(){
-        var token = readCookie('hl_csrf');
-        originalFetch(controlPlaneUrl('/api/auth/logout'), {
-          method: 'POST',
-          credentials: 'include',
-          headers: token ? {'X-CSRF-Token': token} : {}
-        }).finally(function(){
+        agentApiJson('api/hermes-layer/logout', { method: 'POST' }).finally(function(){
           window.location.assign(controlPlaneUrl('/'));
         });
       });
