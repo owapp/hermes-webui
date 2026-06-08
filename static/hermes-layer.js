@@ -670,7 +670,7 @@
       return '<div class="hl-backup-row">' +
         '<div class="hl-backup-main">' +
           '<strong>' + escapeHtml(backup.id) + '</strong>' +
-          '<span>Created ' + escapeHtml(formatDate(backup.createdAt)) + '</span>' +
+          '<span>' + escapeHtml((backup.trigger || 'manual') === 'scheduled' ? 'Automatic backup' : 'Manual backup') + ' - Created ' + escapeHtml(formatDate(backup.createdAt)) + '</span>' +
         '</div>' +
         '<div class="hl-backup-meta">' +
           '<span>' + escapeHtml(backup.status || 'unknown') + '</span>' +
