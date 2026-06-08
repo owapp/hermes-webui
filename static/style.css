@@ -1027,6 +1027,7 @@
   .hl-surface-button:hover:not(:disabled){background:var(--hover-bg);}
   .hl-surface-button:disabled{cursor:not-allowed;opacity:.55;}
   .hl-surface-button.is-primary{border-color:var(--accent);background:var(--accent);color:var(--accent-contrast,#fff);}
+  .hl-action-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:16px;}
   .hl-surface-alert{margin:0 0 16px;border:1px solid color-mix(in srgb,var(--warning,#d97706) 38%,var(--border));border-radius:8px;background:color-mix(in srgb,var(--warning,#d97706) 10%,var(--surface));color:var(--text);padding:10px 12px;font-size:12px;line-height:1.45;}
   .hl-surface-muted{color:var(--muted);font-size:13px;}
   .hl-surface-history{max-height:240px;overflow:auto;border:1px solid var(--border);border-radius:8px;background:var(--surface);padding:12px;color:var(--text);font:12px/1.45 var(--font-mono,ui-monospace,monospace);white-space:pre-wrap;}
@@ -1067,7 +1068,7 @@
   .hl-billing-plan li::before{content:"";position:absolute;left:0;top:.55em;width:6px;height:6px;border-radius:999px;background:var(--accent);}
   .hl-billing-plan .hl-surface-button{margin-top:auto;width:100%;}
   @media(max-width:900px){.hl-billing-grid{grid-template-columns:1fr;}}
-  @media(max-width:760px){.hl-surface{inset:calc(8px + var(--app-titlebar-safe-top)) 8px 8px;width:auto}.hl-surface-row{align-items:flex-start;flex-direction:column}.hl-surface-status-grid,.hl-surface-metrics{grid-template-columns:repeat(2,minmax(0,1fr));}}
+  @media(max-width:760px){.hl-surface{inset:calc(8px + var(--app-titlebar-safe-top)) 8px 8px;width:auto}.hl-surface-row{align-items:flex-start;flex-direction:column}.hl-surface-status-grid,.hl-surface-metrics,.hl-action-grid{grid-template-columns:repeat(2,minmax(0,1fr));}}
   @media(max-width:560px){.hl-backup-row{align-items:flex-start;flex-direction:column}.hl-backup-meta{width:100%;justify-content:space-between;flex-wrap:wrap}.hl-billing-plan-head{flex-direction:column}.hl-billing-plan-head strong{text-align:left}}
   .sidebar{width:300px;background:var(--sidebar);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:visible;flex-shrink:0;transition:width .24s cubic-bezier(.22,1,.36,1),opacity .18s ease,transform .24s cubic-bezier(.22,1,.36,1),border-color .24s ease;}
   .sidebar-header{padding:16px 18px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;}

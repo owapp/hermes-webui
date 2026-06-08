@@ -50,6 +50,8 @@ def test_standalone_hosted_controls_are_removed_from_markup():
 def test_hermes_layer_bridge_owns_account_billing_backups_support_and_headroom_routes():
     required_routes = [
         "api/hermes-layer/session",
+        "api/hermes-layer/workspace",
+        "api/hermes-layer/workspace/action",
         "api/hermes-layer/account",
         "api/hermes-layer/account/profile",
         "api/hermes-layer/account/password",
@@ -68,9 +70,11 @@ def test_hermes_layer_bridge_owns_account_billing_backups_support_and_headroom_r
     for route in required_routes:
         assert route in HERMES_LAYER_JS
 
-    required_actions = ["account", "billing", "optimization", "backups", "support"]
+    required_actions = ["workspace", "account", "billing", "optimization", "backups", "support"]
     assert "data-hl-action" in HERMES_LAYER_JS
     assert "data-hl-account-logout" in HERMES_LAYER_JS
+    assert "data-hl-workspace-action" in HERMES_LAYER_JS
+    assert "Agent status" in HERMES_LAYER_JS
     for action in required_actions:
         assert f"'{action}'" in HERMES_LAYER_JS or f'"{action}"' in HERMES_LAYER_JS
 

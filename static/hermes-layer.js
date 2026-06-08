@@ -304,6 +304,25 @@
     });
   }
 
+  function openWorkspaceSurface(message){
+    surfaceShell(
+      'Agent status',
+      'Control your hosted Hermes Agent runtime through Hermes Layer.',
+      '<div class="hl-surface-muted">Loading...</div>',
+      true
+    );
+    agentApiJson('api/hermes-layer/workspace').then(function(result){
+      renderWorkspaceSurface(result.workspace || {}, false, message || '');
+    }).catch(function(error){
+      surfaceShell(
+        'Agent status',
+        'Control your hosted Hermes Agent runtime through Hermes Layer.',
+        '<div class="hl-surface-alert">' + escapeHtml(error.message || 'Agent status failed.') + '</div>',
+        false
+      );
+    });
+  }
+
   function openSupportSurface(){
     surfaceShell(
       'Support',
@@ -361,6 +380,73 @@
         '<div class="hl-surface-alert">' + escapeHtml(error.message || 'Billing failed.') + '</div>',
         false
       );
+    });
+  }
+
+  function renderWorkspaceSurface(workspace, busy, message){
+    workspace = workspace || {};
+    var state = workspace.state || 'unknown';
+    var health = workspace.healthStatus || 'unknown';
+    var isRunning = state === 'running';
+    var isStopped = state === 'stopped';
+    var isBusyState = ['provisioning', 'restarting', 'backing_up', 'restoring', 'updating', 'deleting'].indexOf(state) >= 0;
+    var canStart = isStopped || state === 'failed';
+    var canStop = isRunning || state === 'failed';
+    var canRestart = isRunning || health === 'unhealthy';
+    var canRecover = state === 'failed' || health === 'unhealthy';
+    var primaryAction = canStart ? 'start' : canRecover ? 'recover' : canRestart ? 'restart' : '';
+    var body =
+      (message ? '<div class="hl-surface-alert">' + escapeHtml(message) + '</div>' : '') +
+      '<div class="hl-surface-row">' +
+        '<div><h3>Your Hermes Agent</h3><p>These actions are mediated by Hermes Layer and audited by the control plane.</p></div>' +
+        '<button class="hl-surface-button" type="button" data-hl-refresh-workspace ' + (busy ? 'disabled' : '') + '>Refresh</button>' +
+      '</div>' +
+      '<div class="hl-surface-status-grid">' +
+        statusItem('Runtime', state, ['running', 'stopped'].indexOf(state) >= 0) +
+        statusItem('Health', health, health === 'healthy' || state === 'stopped') +
+        statusItem('Billing access', 'active', true) +
+        statusItem('Control plane', 'managed', true) +
+      '</div>' +
+      (workspace.errorMessage ? '<div class="hl-surface-alert">' + escapeHtml(workspace.errorMessage) + '</div>' : '') +
+      '<div class="hl-surface-metrics">' +
+        metric('Name', workspace.name || 'Hermes Agent') +
+        metric('Last check', formatDate(workspace.lastHealthCheckAt)) +
+        metric('Updated', formatDate(workspace.updatedAt)) +
+        metric('Created', formatDate(workspace.createdAt)) +
+      '</div>' +
+      '<div class="hl-action-grid">' +
+        '<button class="hl-surface-button ' + (primaryAction === 'start' ? 'is-primary' : '') + '" type="button" data-hl-workspace-action="start" ' + (busy || isBusyState || !canStart ? 'disabled' : '') + '>Start agent</button>' +
+        '<button class="hl-surface-button ' + (primaryAction === 'restart' ? 'is-primary' : '') + '" type="button" data-hl-workspace-action="restart" ' + (busy || isBusyState || !canRestart ? 'disabled' : '') + '>Restart agent</button>' +
+        '<button class="hl-surface-button ' + (primaryAction === 'recover' ? 'is-primary' : '') + '" type="button" data-hl-workspace-action="recover" ' + (busy || isBusyState || !canRecover ? 'disabled' : '') + '>Recover agent</button>' +
+        '<button class="hl-surface-button" type="button" data-hl-workspace-action="stop" ' + (busy || isBusyState || !canStop ? 'disabled' : '') + '>Stop agent</button>' +
+      '</div>';
+    var root = surfaceShell(
+      'Agent status',
+      'Control your hosted Hermes Agent runtime through Hermes Layer.',
+      body,
+      busy
+    );
+    var refresh = root.querySelector('[data-hl-refresh-workspace]');
+    if (refresh) {
+      refresh.addEventListener('click', function(){
+        openWorkspaceSurface();
+      });
+    }
+    root.querySelectorAll('[data-hl-workspace-action]').forEach(function(button){
+      button.addEventListener('click', function(){
+        var action = button.getAttribute('data-hl-workspace-action') || '';
+        if (!action) return;
+        if (action === 'stop' && !window.confirm('Stop this hosted Hermes Agent? Scheduled jobs and chat will pause until it is started again.')) return;
+        renderWorkspaceSurface(workspace, true, action === 'recover' ? 'Recovering agent...' : action.charAt(0).toUpperCase() + action.slice(1) + ' requested...');
+        agentApiJson('api/hermes-layer/workspace/action', {
+          method: 'POST',
+          body: JSON.stringify({ action: action })
+        }).then(function(result){
+          renderWorkspaceSurface(result.workspace || workspace, false, 'Agent ' + (result.appliedAction || action) + ' completed.');
+        }).catch(function(error){
+          renderWorkspaceSurface(workspace, false, error.message || 'Agent action failed.');
+        });
+      });
     });
   }
 
@@ -787,6 +873,7 @@
       action.addEventListener('click', function(event){
         event.preventDefault();
         setOpen(root, false);
+        if (action.getAttribute('data-hl-action') === 'workspace') openWorkspaceSurface();
         if (action.getAttribute('data-hl-action') === 'account') openAccountSurface();
         if (action.getAttribute('data-hl-action') === 'billing') openBillingSurface();
         if (action.getAttribute('data-hl-action') === 'optimization') openOptimizationSurface();
