@@ -5644,6 +5644,7 @@ function _formatUpdateApplyExceptionMessage(error){
   return 'Update failed: '+message;
 }
 async function applyUpdates(){
+  if(window.__hermesLayerHosted) return;
   if(window._updateApplyInFlight) return;
   window._updateApplyInFlight=true;
   const btn=$('btnApplyUpdate');
@@ -5746,6 +5747,7 @@ async function _readHealthServerIdentity() {
   }
 }
 async function forceUpdate(btn){
+  if(window.__hermesLayerHosted) return;
   const target=btn&&btn.dataset.target;
   if(!target) return;
   const confirmed=await showConfirmDialog({

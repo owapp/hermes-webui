@@ -134,6 +134,11 @@ def test_hosted_mode_blocks_webui_updates_shutdown_auth_and_passkeys():
     assert "body.check_for_updates" in PANELS_JS
     assert "if(!window.__hermesLayerHosted)" in PANELS_JS
 
+    for marker in ["async function applyUpdates", "async function forceUpdate"]:
+        start = UI_JS.index(marker)
+        block = UI_JS[start:start + 180]
+        assert "if(window.__hermesLayerHosted) return;" in block, f"{marker} must no-op in hosted mode"
+
 
 def test_dashboard_and_host_editor_surfaces_are_hosted_guarded():
     for marker in [
