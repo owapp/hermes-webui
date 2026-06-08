@@ -35,6 +35,14 @@ _WEBUI_GATEWAY_API_KEY_ENV = "HERMES_WEBUI_GATEWAY_API_KEY"
 _GATEWAY_CHAT_BACKENDS = {"gateway", "api_server", "api-server"}
 
 
+def _gateway_runtime_provider(provider: str | None) -> str | None:
+    """Return the Hermes Agent provider slug to send to the Gateway API server."""
+    normalized = str(provider or "").strip().lower()
+    if normalized == "openai":
+        return "openai-api"
+    return normalized or None
+
+
 def webui_chat_backend_mode(config_data=None, environ: dict[str, str] | None = None) -> str:
     """Return the explicitly selected browser chat backend.
 
@@ -317,8 +325,9 @@ def _run_gateway_chat_streaming(
             "stream": True,
             "messages": [*prefill_messages, {"role": "user", "content": message_content}],
         }
-        if model_provider:
-            body["provider"] = model_provider
+        gateway_provider = _gateway_runtime_provider(model_provider)
+        if gateway_provider:
+            body["provider"] = gateway_provider
         req = urllib.request.Request(
             url,
             data=json.dumps(body).encode("utf-8"),

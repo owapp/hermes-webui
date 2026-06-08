@@ -13,6 +13,7 @@ from api.config import STREAMS, create_stream_channel
 from api.models import new_session
 from api.gateway_chat import (
     _gateway_http_error_event,
+    _gateway_runtime_provider,
     _gateway_sse_delta,
     _gateway_stream_usage,
     _gateway_tool_progress_event,
@@ -96,6 +97,14 @@ def test_gateway_stream_usage_normalizes_token_names():
         "estimated_cost": 0.01,
     }
     assert _gateway_stream_usage({}) == {}
+
+
+def test_gateway_runtime_provider_maps_legacy_openai_to_agent_slug():
+    assert _gateway_runtime_provider("openai") == "openai-api"
+    assert _gateway_runtime_provider(" OpenAI ") == "openai-api"
+    assert _gateway_runtime_provider("openai-api") == "openai-api"
+    assert _gateway_runtime_provider("anthropic") == "anthropic"
+    assert _gateway_runtime_provider(None) is None
 
 
 def test_gateway_tool_progress_event_translates_gateway_lifecycle_payloads():
@@ -312,6 +321,7 @@ def test_gateway_chat_worker_translates_sse_and_persists_session(tmp_path, monke
         "Say hello",
     ]
     assert [m["role"] for m in payload["messages"]] == ["system", "assistant", "user"]
+    assert "provider" not in payload
     events = []
     while not subscriber.empty():
         events.append(subscriber.get_nowait())
@@ -333,6 +343,56 @@ def test_gateway_chat_worker_translates_sse_and_persists_session(tmp_path, monke
         "tid": "call-1",
     }) in event_pairs
     assert all(len(item) == 3 and item[2] for item in events)
+
+
+def test_gateway_chat_worker_sends_agent_provider_slug_for_openai_api(tmp_path, monkeypatch):
+    session_dir = tmp_path / "sessions"
+    session_dir.mkdir()
+    monkeypatch.setattr(models, "SESSION_DIR", session_dir)
+    monkeypatch.setattr(models, "SESSION_INDEX_FILE", session_dir / "_index.json")
+    monkeypatch.setattr(models, "SESSIONS", OrderedDict())
+
+    captured = {}
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def __iter__(self):
+            yield b'data: {"choices":[{"delta":{"content":"ok"}}]}\n\n'
+            yield b'data: [DONE]\n\n'
+
+    def fake_urlopen(req, timeout=0):
+        captured["body"] = json.loads(req.data.decode("utf-8"))
+        return FakeResponse()
+
+    monkeypatch.setenv("HERMES_WEBUI_GATEWAY_BASE_URL", "http://gateway.local")
+    monkeypatch.setattr(streaming, "_load_webui_prefill_context", lambda cfg: {"status": "not_configured", "source": "none", "label": "", "message_count": 0, "messages": []})
+    monkeypatch.setattr(streaming, "_prefill_messages_with_webui_context", lambda ctx, cfg: [])
+    monkeypatch.setattr(gateway_chat.urllib.request, "urlopen", fake_urlopen)
+
+    s = new_session()
+    stream_id = "stream-gateway-openai-provider-test"
+    s.active_stream_id = stream_id
+    s.save()
+    STREAMS[stream_id] = create_stream_channel()
+
+    gateway_chat._run_gateway_chat_streaming(
+        s.session_id,
+        "Say ok",
+        "gpt-4o-mini",
+        str(tmp_path),
+        stream_id,
+        [],
+        model_provider="openai",
+    )
+
+    assert captured["body"]["provider"] == "openai-api"
+    saved = models.get_session(s.session_id)
+    assert saved.messages[-1]["content"] == "ok"
 
 
 def test_gateway_chat_worker_normalizes_prefill_slice_before_system_prefix(tmp_path, monkeypatch):

@@ -38,6 +38,16 @@ class TestOpenaiApiPickerProvider:
         assert cfg._canonicalise_provider_id("openai-codex") == "openai-codex"
 
 
+class TestOpenaiApiProviderSettings:
+    """Settings -> Providers must configure the provider slug Hermes Agent can run."""
+
+    def test_openai_api_uses_openai_api_key_env_var(self):
+        import api.providers as providers
+
+        assert providers._PROVIDER_ENV_VAR["openai-api"] == "OPENAI_API_KEY"
+        assert providers._provider_env_var_for("openai-api") == "OPENAI_API_KEY"
+
+
 class TestOpenaiApiSendPath:
     """The send path must preserve openai-api, not collapse it to openai."""
 
