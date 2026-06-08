@@ -126,6 +126,17 @@ def test_hosted_layer_surfaces_use_agent_language_not_infra_labels():
     assert "statusItem('MCP'" not in HERMES_LAYER_JS
 
 
+def test_hosted_mode_forces_api_response_redaction():
+    assert "Hosted workspaces keep redaction enabled" in HTML
+    assert "Hosted workspaces keep redaction enabled" in (STATIC / "i18n.js").read_text(encoding="utf-8")
+
+    assert "payload.api_redact_enabled=window.__hermesLayerHosted?true:apiRedactCb.checked;" in PANELS_JS
+    assert "apiRedactCb.checked=window.__hermesLayerHosted?true:settings.api_redact_enabled!==false;" in PANELS_JS
+    assert "apiRedactCb.disabled=!!window.__hermesLayerHosted;" in PANELS_JS
+    assert "body.api_redact_enabled=window.__hermesLayerHosted?true:!!($('settingsApiRedact')||{}).checked;" in PANELS_JS
+    assert "Self-hosted users can disable for transparency" not in HTML
+
+
 def test_hosted_bridge_does_not_integrate_webui_through_iframe_or_proxy_dom_patch():
     lowered = HERMES_LAYER_JS.lower()
     assert "iframe" not in lowered

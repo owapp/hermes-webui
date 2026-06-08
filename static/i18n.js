@@ -866,7 +866,7 @@ const LOCALES = {
     settings_desc_notifications: 'Show a system notification when a response completes while the app is in the background.',
     settings_desc_token_usage: 'Displays input/output token count below each assistant reply. Also toggled with /usage.',
     settings_label_api_redact: 'Redact sensitive data in API responses',
-    settings_desc_api_redact: 'Self-hosted users can disable for transparency (not recommended for shared instances).',
+    settings_desc_api_redact: 'Hosted workspaces keep redaction enabled to prevent sensitive values from appearing in browser API responses.',
     settings_sidebar_density_compact: 'Compact',
     settings_sidebar_density_detailed: 'Detailed',
     settings_desc_sidebar_density: 'Controls how much metadata the session list shows in the left sidebar.',

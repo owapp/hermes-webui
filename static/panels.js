@@ -6140,7 +6140,7 @@ function _preferencesPayloadFromUi(){
   const terminalAutoExpandCb=$('settingsTerminalAutoExpand');
   if(terminalAutoExpandCb) payload.terminal_auto_expand_on_output=terminalAutoExpandCb.checked;
   const apiRedactCb=$('settingsApiRedact');
-  if(apiRedactCb) payload.api_redact_enabled=apiRedactCb.checked;
+  if(apiRedactCb) payload.api_redact_enabled=window.__hermesLayerHosted?true:apiRedactCb.checked;
   const showCliCb=$('settingsShowCliSessions');
   if(showCliCb) payload.show_cli_sessions=showCliCb.checked;
   const showCronCb=$('settingsShowCronSessions');
@@ -6467,7 +6467,11 @@ async function loadSettingsPanel(){
     const terminalAutoExpandCb=$('settingsTerminalAutoExpand');
     if(terminalAutoExpandCb){terminalAutoExpandCb.checked=!!settings.terminal_auto_expand_on_output;window._terminalAutoExpandOnOutput=terminalAutoExpandCb.checked;terminalAutoExpandCb.addEventListener('change',_schedulePreferencesAutosave,{once:false});}
     const apiRedactCb=$('settingsApiRedact');
-    if(apiRedactCb){apiRedactCb.checked=settings.api_redact_enabled!==false;apiRedactCb.addEventListener('change',_schedulePreferencesAutosave,{once:false});}
+    if(apiRedactCb){
+      apiRedactCb.checked=window.__hermesLayerHosted?true:settings.api_redact_enabled!==false;
+      apiRedactCb.disabled=!!window.__hermesLayerHosted;
+      if(!window.__hermesLayerHosted) apiRedactCb.addEventListener('change',_schedulePreferencesAutosave,{once:false});
+    }
     const showCliCb=$('settingsShowCliSessions');
     if(showCliCb){showCliCb.checked=!!settings.show_cli_sessions;showCliCb.addEventListener('change',_schedulePreferencesAutosave,{once:false});}
     const showCronCb=$('settingsShowCronSessions');
@@ -7884,7 +7888,7 @@ async function saveSettings(andClose){
   body.fade_text_effect=fadeTextEffect;
   body.simplified_tool_calling=!!($('settingsSimplifiedToolCalling')||{}).checked;
   body.terminal_auto_expand_on_output=!!($('settingsTerminalAutoExpand')||{}).checked;
-  body.api_redact_enabled=!!($('settingsApiRedact')||{}).checked;
+  body.api_redact_enabled=window.__hermesLayerHosted?true:!!($('settingsApiRedact')||{}).checked;
   body.show_cli_sessions=showCliSessions;
   // Cron sessions are gated on CLI sessions (server short-circuits otherwise);
   // mirror the autosave path so the explicit Save Settings button persists it too. (#3514)
