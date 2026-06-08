@@ -11,7 +11,7 @@ function _hostedOnboardingReady(){
 
 function _configureOnboardingMode(){
   const hosted=_isHostedOnboarding();
-  ONBOARDING.steps=hosted?['system','setup','workspace','finish']:['system','setup','workspace','password','finish'];
+  ONBOARDING.steps=hosted?['setup','workspace','finish']:['system','setup','workspace','password','finish'];
   if(ONBOARDING.step>=ONBOARDING.steps.length)ONBOARDING.step=ONBOARDING.steps.length-1;
   const badge=document.querySelector('#onboardingOverlay .onboarding-badge');
   const title=$('onboardingTitle');
@@ -154,7 +154,6 @@ function _getOnboardingCurrentSetup(){
 function _onboardingStepMeta(key){
   if(_isHostedOnboarding()){
     return ({
-      system:{title:'Agent check',desc:'Confirm the hosted runtime is ready.'},
       setup:{title:'Provider setup',desc:'Connect the model provider for this agent.'},
       workspace:{title:'Workspace + model',desc:'Choose the default workspace and model.'},
       finish:{title:'Start',desc:'Review and open your agent.'}
@@ -274,6 +273,20 @@ function _providerStatusLabel(system){
   return t('onboarding_check_provider_pending');
 }
 
+function _renderHostedRuntimeSummary(){
+  if(!_isHostedOnboarding())return '';
+  const system=(ONBOARDING.status||{}).system||{};
+  const hermesOk=system.hermes_found&&system.imports_ok;
+  const providerState=system.chat_ready?'Ready to chat':(system.provider_configured?'Saved, credentials pending':'Needs setup');
+  return `
+    <div class="onboarding-panel-grid onboarding-hosted-summary">
+      <div class="onboarding-check ${hermesOk?'ok':'warn'}"><strong>Hermes Agent</strong><span>${hermesOk?'Ready':'Starting'}</span></div>
+      <div class="onboarding-check ${system.chat_ready?'ok':system.provider_configured?'warn':'muted'}"><strong>Provider</strong><span>${providerState}</span></div>
+      <div class="onboarding-check ok"><strong>Access</strong><span>Managed by Hermes Layer</span></div>
+    </div>
+    <p class="onboarding-copy"><strong>Context optimization:</strong> ${((ONBOARDING.status||{}).hosted||{}).headroom?'Headroom is available for this workspace.':'Not enabled for this workspace.'}</p>`;
+}
+
 function _renderOnboardingBody(){
   const body=$('onboardingBody');
   if(!body||!ONBOARDING.status)return;
@@ -290,28 +303,16 @@ function _renderOnboardingBody(){
   if(key==='system'){
     const hermesOk=system.hermes_found&&system.imports_ok;
     const setupOk=!!system.chat_ready;
-    const hosted=_isHostedOnboarding();
-    const agentLabel=hosted?'Hermes Agent':t('onboarding_check_agent');
-    const agentState=hosted?(hermesOk?'Detected and ready':'Starting or unavailable'):(hermesOk?t('onboarding_check_agent_ready'):t('onboarding_check_agent_missing'));
-    const providerLabel=hosted?'Provider configuration':t('onboarding_check_provider');
-    const providerState=hosted?(system.chat_ready?'Ready to chat':(system.provider_configured?'Saved, credentials pending':'Needs setup')):_providerStatusLabel(system);
-    _setOnboardingNotice(
-      hosted
-        ? (setupOk?'Your hosted Hermes Agent is ready to chat.':(system.provider_note||'Choose a provider before using your hosted Hermes Agent.'))
-        : (system.provider_note|| (setupOk?t('onboarding_notice_system_ready'):t('onboarding_notice_system_unavailable'))),
-      setupOk?'success':(hermesOk?'info':'warn')
-    );
+    _setOnboardingNotice(system.provider_note|| (setupOk?t('onboarding_notice_system_ready'):t('onboarding_notice_system_unavailable')),setupOk?'success':(hermesOk?'info':'warn'));
     body.innerHTML=`
       <div class="onboarding-panel-grid">
-        <div class="onboarding-check ${hermesOk?'ok':'warn'}"><strong>${agentLabel}</strong><span>${agentState}</span></div>
-        <div class="onboarding-check ${(setupOk?'ok':system.provider_configured?'warn':'muted')}"><strong>${providerLabel}</strong><span>${providerState}</span></div>
-        ${hosted
-          ? `<div class="onboarding-check ok"><strong>Hermes Layer access</strong><span>Managed by your SaaS account</span></div>`
-          : `<div class="onboarding-check ${(settings.password_enabled?'ok':'muted')}"><strong>${t('onboarding_check_password')}</strong><span>${settings.password_enabled?t('onboarding_check_password_enabled'):t('onboarding_check_password_disabled')}</span></div>`}
+        <div class="onboarding-check ${hermesOk?'ok':'warn'}"><strong>${t('onboarding_check_agent')}</strong><span>${hermesOk?t('onboarding_check_agent_ready'):t('onboarding_check_agent_missing')}</span></div>
+        <div class="onboarding-check ${(setupOk?'ok':system.provider_configured?'warn':'muted')}"><strong>${t('onboarding_check_provider')}</strong><span>${_providerStatusLabel(system)}</span></div>
+        <div class="onboarding-check ${(settings.password_enabled?'ok':'muted')}"><strong>${t('onboarding_check_password')}</strong><span>${settings.password_enabled?t('onboarding_check_password_enabled'):t('onboarding_check_password_disabled')}</span></div>
       </div>
       <div class="onboarding-copy">
-        ${hosted?`<p><strong>Hosted runtime:</strong> isolated and managed by Hermes Layer.</p>`:`<p><strong>${t('onboarding_config_file')}</strong> ${esc(system.config_path||t('onboarding_unknown'))}</p><p><strong>${t('onboarding_env_file')}</strong> ${esc(system.env_path||t('onboarding_unknown'))}</p>`}
-        ${hosted&&((ONBOARDING.status||{}).hosted||{}).headroom?`<p><strong>Context optimization:</strong> Headroom is available for this workspace.</p>`:''}
+        <p><strong>${t('onboarding_config_file')}</strong> ${esc(system.config_path||t('onboarding_unknown'))}</p>
+        <p><strong>${t('onboarding_env_file')}</strong> ${esc(system.env_path||t('onboarding_unknown'))}</p>
         <p>${esc(system.provider_note||'')}</p>
         ${system.current_provider?`<p><strong>${t('onboarding_current_provider')}</strong> ${esc(system.current_provider)}${system.current_model?` — ${esc(system.current_model)}`:''}</p>`:''}
         ${system.current_base_url?`<p><strong>${t('onboarding_base_url_label')}</strong> ${esc(system.current_base_url)}</p>`:''}
@@ -383,8 +384,14 @@ function _renderOnboardingBody(){
       return;
     }
 
-    _setOnboardingNotice(system.chat_ready?t('onboarding_notice_setup_already_ready'):t('onboarding_notice_setup_required'),system.chat_ready?'success':'info');
+    _setOnboardingNotice(
+      _isHostedOnboarding()
+        ? (system.chat_ready?'Your hosted Hermes Agent is ready to chat.':'Connect a provider before using your hosted Hermes Agent.')
+        : (system.chat_ready?t('onboarding_notice_setup_already_ready'):t('onboarding_notice_setup_required')),
+      system.chat_ready?'success':'info'
+    );
     body.innerHTML=`
+      ${_renderHostedRuntimeSummary()}
       <label class="onboarding-field">
         <span>${t('onboarding_provider_label')}</span>
         <select id="onboardingProviderSelect" onchange="syncOnboardingProvider(this.value)">${groupedOptions}</select>
