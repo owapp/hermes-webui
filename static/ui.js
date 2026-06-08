@@ -11029,7 +11029,7 @@ async function promptNewFolder(){
     await loadDir(S.currentDir);
     // Offer to add the new folder as a space (#782)
     const absPath=S.session.workspace?((S.currentDir==='.'?S.session.workspace:S.session.workspace+'/'+S.currentDir)+'/'+name.trim()):null;
-    if(absPath){
+    if(absPath&&!window.__hermesLayerHosted){
       const addAsSpace=await showConfirmDialog({
         title:t('folder_add_as_space_title'),
         message:t('folder_add_as_space_msg'),

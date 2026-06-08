@@ -155,7 +155,7 @@ function _onboardingStepMeta(key){
   if(_isHostedOnboarding()){
     return ({
       setup:{title:'Provider setup',desc:'Connect the model provider for this agent.'},
-      workspace:{title:'Workspace + model',desc:'Choose the default workspace and model.'},
+      workspace:{title:'Model',desc:'Choose the default model for new chats.'},
       finish:{title:'Start',desc:'Review and open your agent.'}
     })[key];
   }
@@ -193,6 +193,11 @@ function _setOnboardingNotice(msg,kind='info'){
 function _getOnboardingWorkspaceChoices(){
   const items=((ONBOARDING.status||{}).workspaces||{}).items||[];
   return items.length?items:[{name:'Home',path:ONBOARDING.form.workspace||''}];
+}
+
+function _getHostedDefaultWorkspace(){
+  const status=ONBOARDING.status||{};
+  return ((status.settings||{}).default_workspace||(status.workspaces||{}).last||ONBOARDING.form.workspace||'').trim();
 }
 
 function _getOnboardingProviderModelChoices(){
@@ -403,6 +408,14 @@ function _renderOnboardingBody(){
   }
 
   if(key==='workspace'){
+    if(_isHostedOnboarding()){
+      ONBOARDING.form.workspace=_getHostedDefaultWorkspace();
+      _setOnboardingNotice('Choose the model Hermes should use for new chats.', 'info');
+      body.innerHTML=`${_renderOnboardingModelField()}`;
+      const modelSel=$('onboardingModelSelect');
+      if(modelSel && ONBOARDING.form.model) modelSel.value=ONBOARDING.form.model;
+      return;
+    }
     const workspaceOptions=_getOnboardingWorkspaceChoices().map(ws=>`<option value="${esc(ws.path)}">${esc(ws.name||ws.path)} — ${esc(ws.path)}</option>`).join('');
     _setOnboardingNotice(t('onboarding_notice_workspace'), 'info');
     body.innerHTML=`
@@ -440,13 +453,12 @@ function _renderOnboardingBody(){
     <div class="onboarding-summary">
       <div><strong>${t('onboarding_provider_label')}</strong><span>${esc((provider&&provider.label)||ONBOARDING.form.provider||t('onboarding_not_set'))}</span></div>
       <div><strong>${t('onboarding_model_label')}</strong><span>${esc(_getOnboardingSelectedModel()||t('onboarding_not_set'))}</span></div>
-      <div><strong>${t('onboarding_workspace_label')}</strong><span>${esc(ONBOARDING.form.workspace||t('onboarding_not_set'))}</span></div>
       ${_isHostedOnboarding()
         ? ''
-        : `<div><strong>${t('onboarding_check_password')}</strong><span>${t(_getOnboardingPasswordSummaryKey(settings))}</span></div>`}
+        : `<div><strong>${t('onboarding_workspace_label')}</strong><span>${esc(ONBOARDING.form.workspace||t('onboarding_not_set'))}</span></div><div><strong>${t('onboarding_check_password')}</strong><span>${t(_getOnboardingPasswordSummaryKey(settings))}</span></div>`}
     </div>
     ${ONBOARDING.form.baseUrl?`<p class="onboarding-copy"><strong>${t('onboarding_base_url_label')}</strong> ${esc(ONBOARDING.form.baseUrl)}</p>`:''}
-    <p class="onboarding-copy">${_isHostedOnboarding()?'Your agent opens with the selected provider, model and workspace. You can change provider settings later from WebUI preferences.':t('onboarding_finish_help')}</p>`;
+    <p class="onboarding-copy">${_isHostedOnboarding()?'Your agent opens with the selected provider and model. You can change provider settings later from WebUI preferences.':t('onboarding_finish_help')}</p>`;
 }
 
 function _getOnboardingPasswordSummaryKey(settings){
@@ -485,7 +497,7 @@ async function loadOnboardingWizard(){
     _configureOnboardingMode();
     const current=((status.setup||{}).current)||{};
     ONBOARDING.form.provider=current.provider||'openrouter';
-    ONBOARDING.form.workspace=(status.workspaces&&status.workspaces.last)||status.settings.default_workspace||'';
+    ONBOARDING.form.workspace=status.settings.default_workspace||(status.workspaces&&status.workspaces.last)||'';
     ONBOARDING.form.model=status.settings.default_model||current.model||'';
     ONBOARDING.form.password='';
     ONBOARDING.form.apiKey='';
@@ -533,13 +545,13 @@ async function _saveOnboardingProviderSetup(){
 }
 
 async function _saveOnboardingDefaults(){
-  const workspace=(ONBOARDING.form.workspace||'').trim();
+  const workspace=(_isHostedOnboarding()?_getHostedDefaultWorkspace():ONBOARDING.form.workspace||'').trim();
   const model=(ONBOARDING.form.model||'').trim();
   const password=(ONBOARDING.form.password||'').trim();
   if(!workspace) throw new Error(t('onboarding_error_choose_workspace'));
   if(!model) throw new Error(t('onboarding_error_choose_model'));
   const known=_getOnboardingWorkspaceChoices().some(ws=>ws.path===workspace);
-  if(!known){
+  if(!known&&!_isHostedOnboarding()){
     await api('/api/workspaces/add',{method:'POST',body:JSON.stringify({path:workspace})});
   }
   // Model persisted by /api/onboarding/setup — no /api/default-model call needed here
@@ -612,7 +624,7 @@ async function nextOnboardingStep(){
       }
     }
     if(ONBOARDING.steps[ONBOARDING.step]==='workspace'){
-      ONBOARDING.form.workspace=(($('onboardingWorkspaceInput')||{}).value||ONBOARDING.form.workspace||'').trim();
+      ONBOARDING.form.workspace=(_isHostedOnboarding()?_getHostedDefaultWorkspace():(($('onboardingWorkspaceInput')||{}).value||ONBOARDING.form.workspace||'')).trim();
       ONBOARDING.form.model=(($('onboardingModelInput')||{}).value||($('onboardingModelSelect')||{}).value||ONBOARDING.form.model||'').trim();
       if(!ONBOARDING.form.workspace) throw new Error(t('onboarding_error_workspace_required'));
       if(!ONBOARDING.form.model) throw new Error(t('onboarding_error_model_required'));

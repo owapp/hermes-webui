@@ -4273,6 +4273,48 @@ let _wsSuggestTimer = null;
 let _wsSuggestReq = 0;
 let _wsSuggestIndex = -1;
 
+function _hostedProjectsMode(){
+  return !!window.__hermesLayerHosted;
+}
+
+function _workspaceDisplayName(workspace){
+  if(!workspace)return '';
+  const name=(workspace.name||'').trim();
+  if(_hostedProjectsMode()){
+    if(!name||name==='Home')return workspace.is_default?'Main project':'Project';
+    return name;
+  }
+  return name||workspace.path||'';
+}
+
+function _workspaceDisplayMeta(workspace){
+  if(!workspace)return '';
+  return _hostedProjectsMode()?'Project':(workspace.path||'');
+}
+
+function _workspaceEntityLabel(){
+  return _hostedProjectsMode()?'Project':'Space';
+}
+
+function syncHostedProjectLabels(){
+  if(!_hostedProjectsMode())return;
+  document.querySelectorAll('[data-i18n="tab_workspaces"]').forEach(el=>{el.textContent='Projects';});
+  document.querySelectorAll('[data-panel="workspaces"]').forEach(el=>{
+    el.setAttribute('data-tooltip','Projects');
+    el.setAttribute('aria-label','Projects');
+    if(el.getAttribute('title'))el.setAttribute('title','Projects');
+  });
+  document.querySelectorAll('[onclick="openWorkspaceCreate()"]').forEach(el=>{
+    el.setAttribute('data-tooltip','Add project');
+    el.setAttribute('aria-label','Add project');
+    if(el.getAttribute('title'))el.setAttribute('title','Add project');
+  });
+  const emptyTitle=document.querySelector('#workspaceDetailEmpty .main-view-empty-title');
+  const emptySub=document.querySelector('#workspaceDetailEmpty .main-view-empty-sub');
+  if(emptyTitle)emptyTitle.textContent='Select a project';
+  if(emptySub)emptySub.textContent='Pick a project to view its files and settings, or add a new one.';
+}
+
 function closeWorkspacePathSuggestions(){
   const box=$('workspaceFormPathSuggestions');
   if(box){
@@ -4362,8 +4404,9 @@ function getWorkspaceFriendlyName(path){
   // Look up the friendly name from the workspace list cache, fallback to last path segment
   if(_workspaceList && _workspaceList.length){
     const match=_workspaceList.find(w=>w.path===path);
-    if(match && match.name) return match.name;
+    if(match) return _workspaceDisplayName(match);
   }
+  if(_hostedProjectsMode()) return 'Project';
   return path.split('/').filter(Boolean).pop()||path;
 }
 
@@ -4379,7 +4422,7 @@ function syncWorkspaceDisplays(){
   const sidebarName=$('sidebarWsName');
   const sidebarPath=$('sidebarWsPath');
   if(sidebarName) sidebarName.textContent=label;
-  if(sidebarPath) sidebarPath.textContent=ws;
+  if(sidebarPath) sidebarPath.textContent=_hostedProjectsMode()?(hasWorkspace?'Project':''):ws;
 
   const composerChip=$('composerWorkspaceChip');
   const composerLabel=$('composerWorkspaceLabel');
@@ -4393,20 +4436,22 @@ function syncWorkspaceDisplays(){
   if(mobileLabel) mobileLabel.textContent=S._bootReady?label:'';
   if(composerChip){
     composerChip.disabled=!hasWorkspace;
-    composerChip.title=hasWorkspace?ws:t('no_workspace');
+    composerChip.title=hasWorkspace?(_hostedProjectsMode()?label:ws):t('no_workspace');
     composerChip.classList.toggle('active',!!(composerDropdown&&composerDropdown.classList.contains('open')));
   }
   if(mobileAction){
-    mobileAction.title=hasWorkspace?ws:t('no_workspace');
+    mobileAction.title=hasWorkspace?(_hostedProjectsMode()?label:ws):t('no_workspace');
     mobileAction.classList.toggle('active',!!(composerDropdown&&composerDropdown.classList.contains('open')));
   }
 }
 
 async function loadWorkspaceList(){
   try{
+    syncHostedProjectLabels();
     const data = await api('/api/workspaces');
     if(typeof syncTerminalBackendState==='function') syncTerminalBackendState(data);
     _workspaceList = data.workspaces || [];
+    syncHostedProjectLabels();
     syncWorkspaceDisplays();
     if(typeof syncTerminalButton==='function') syncTerminalButton();
     return data;
@@ -4454,11 +4499,12 @@ function _positionProfileDropdown(){
 function renderWorkspaceDropdownInto(dd, workspaces, currentWs){
   if(!dd)return;
   dd.innerHTML='';
+  const hosted=_hostedProjectsMode();
 
   // ── Search row ──────────────────────────────────────────────────────────
   const searchRow=document.createElement('div');
   searchRow.className='ws-search-row';
-  searchRow.innerHTML=`<input class="ws-search-input" type="text" placeholder="${esc(t('ws_search_placeholder')||'Search workspaces…')}" spellcheck="false" autocomplete="off"><button class="ws-search-clear" title="Clear search">${li('x',10)}</button>`;
+  searchRow.innerHTML=`<input class="ws-search-input" type="text" placeholder="${esc(hosted?'Search projects…':(t('ws_search_placeholder')||'Search workspaces…'))}" spellcheck="false" autocomplete="off"><button class="ws-search-clear" title="Clear search">${li('x',10)}</button>`;
   const si=searchRow.querySelector('.ws-search-input');
   const sc=searchRow.querySelector('.ws-search-clear');
   dd.appendChild(searchRow);
@@ -4473,7 +4519,7 @@ function renderWorkspaceDropdownInto(dd, workspaces, currentWs){
   // Pre-create noResults element so filterWs can reference it safely from the start.
   const noResults=document.createElement('div');
   noResults.className='ws-no-results';
-  noResults.textContent=t('ws_no_results')||'No workspaces found';
+  noResults.textContent=hosted?'No projects found':(t('ws_no_results')||'No workspaces found');
   noResults.style.display='none';
 
   function filterWs(term){
@@ -4483,7 +4529,7 @@ function renderWorkspaceDropdownInto(dd, workspaces, currentWs){
     for(const opt of opts){
       const name=(opt.dataset.name||'').toLowerCase();
       const path=(opt.dataset.path||'').toLowerCase();
-      const show=!term||name.includes(term)||path.includes(term);
+      const show=!term||name.includes(term)||(!hosted&&path.includes(term));
       opt.style.display=show?'':'none';
       if(show) visible++;
     }
@@ -4495,9 +4541,9 @@ function renderWorkspaceDropdownInto(dd, workspaces, currentWs){
     for(const w of sorted){
       const opt=document.createElement('div');
       opt.className='ws-opt'+(w.path===currentWs?' active':'');
-      opt.dataset.name=w.name||'';
-      opt.dataset.path=w.path||'';
-      opt.innerHTML=`<span class="ws-opt-name">${esc(w.name)}</span><span class="ws-opt-path">${esc(w.path)}</span>`;
+      opt.dataset.name=_workspaceDisplayName(w)||'';
+      opt.dataset.path=hosted?'':(w.path||'');
+      opt.innerHTML=`<span class="ws-opt-name">${esc(_workspaceDisplayName(w))}</span><span class="ws-opt-path">${esc(_workspaceDisplayMeta(w))}</span>`;
       opt.onclick=()=>switchToWorkspace(w.path,w.name);
       listContainer.appendChild(opt);
     }
@@ -4512,34 +4558,43 @@ function renderWorkspaceDropdownInto(dd, workspaces, currentWs){
 
   // ── Footer actions ────────────────────────────────────────────────────────
   dd.appendChild(document.createElement('div')).className='ws-divider';
-  dd.appendChild(_renderWorkspaceAction(
-    t('workspace_new_worktree_conversation'),
-    t('workspace_new_worktree_conversation_meta'),
-    li('git-branch',12),
-    async()=>{
-      closeWsDropdown();
-      try{
-        await newSession(false,{worktree:true});
-        await renderSessionList();
-        const msg=$('msg');
-        if(msg)msg.focus();
-        showToast(t('workspace_worktree_created'));
-      }catch(e){
-        showToast(t('workspace_worktree_failed')+(e&&e.message?e.message:e),'error');
+  if(hosted){
+    dd.appendChild(_renderWorkspaceAction(
+      'New project',
+      'Create a project folder inside this hosted agent',
+      li('folder',12),
+      ()=>{closeWsDropdown();openWorkspaceCreate();}
+    ));
+  }else{
+    dd.appendChild(_renderWorkspaceAction(
+      t('workspace_new_worktree_conversation'),
+      t('workspace_new_worktree_conversation_meta'),
+      li('git-branch',12),
+      async()=>{
+        closeWsDropdown();
+        try{
+          await newSession(false,{worktree:true});
+          await renderSessionList();
+          const msg=$('msg');
+          if(msg)msg.focus();
+          showToast(t('workspace_worktree_created'));
+        }catch(e){
+          showToast(t('workspace_worktree_failed')+(e&&e.message?e.message:e),'error');
+        }
       }
-    }
-  ));
-  dd.appendChild(document.createElement('div')).className='ws-divider';
-  dd.appendChild(_renderWorkspaceAction(
-    t('workspace_choose_path'),
-    t('workspace_choose_path_meta'),
-    li('folder',12),
-    ()=>promptWorkspacePath()
-  ));
+    ));
+    dd.appendChild(document.createElement('div')).className='ws-divider';
+    dd.appendChild(_renderWorkspaceAction(
+      t('workspace_choose_path'),
+      t('workspace_choose_path_meta'),
+      li('folder',12),
+      ()=>promptWorkspacePath()
+    ));
+  }
   const div=document.createElement('div');div.className='ws-divider';dd.appendChild(div);
   dd.appendChild(_renderWorkspaceAction(
-    t('workspace_manage'),
-    t('workspace_manage_meta'),
+    hosted?'Manage projects':t('workspace_manage'),
+    hosted?'Rename, switch, or remove hosted projects':t('workspace_manage_meta'),
     li('settings',12),
     ()=>{closeWsDropdown();mobileSwitchPanel('workspaces');}
   ));
@@ -4607,6 +4662,7 @@ window.addEventListener('resize',()=>{
 async function loadWorkspacesPanel(){
   const panel=$('workspacesPanel');
   if(!panel)return;
+  syncHostedProjectLabels();
   const data=await loadWorkspaceList();
   renderWorkspacesPanel(data.workspaces);
 }
@@ -4614,6 +4670,7 @@ async function loadWorkspacesPanel(){
 function renderWorkspacesPanel(workspaces){
   const panel=$('workspacesPanel');
   panel.innerHTML='';
+  const hosted=_hostedProjectsMode();
   const activePath = S.session ? S.session.workspace : '';
   for(let i=0;i<workspaces.length;i++){
     const w=workspaces[i];
@@ -4626,8 +4683,8 @@ function renderWorkspacesPanel(workspaces){
     row.innerHTML=`
       <span class="ws-drag-handle" title="${esc(t('workspace_drag_hint'))}">${li('grip-vertical',12)}</span>
       <div class="ws-row-info">
-        <div class="ws-row-name">${esc(w.name)}${activeBadge}</div>
-        <div class="ws-row-path">${esc(w.path)}</div>
+        <div class="ws-row-name">${esc(_workspaceDisplayName(w))}${activeBadge}</div>
+        <div class="ws-row-path">${esc(_workspaceDisplayMeta(w))}</div>
       </div>`;
     // Click on info area only — not on drag handle
     const info=row.querySelector('.ws-row-info');
@@ -4689,7 +4746,7 @@ function renderWorkspacesPanel(workspaces){
   }
   const hint=document.createElement('div');
   hint.style.cssText='font-size:11px;color:var(--muted);padding:8px 0';
-  hint.textContent=t('workspace_paths_validated_hint');
+  hint.textContent=hosted?'Projects are created inside this hosted agent. File-system paths are managed automatically.':t('workspace_paths_validated_hint');
   panel.appendChild(hint);
   // Re-render detail if we have one cached and we're not in a form
   if (_currentWorkspaceDetail && _workspaceMode !== 'create' && _workspaceMode !== 'edit') {
@@ -4705,7 +4762,7 @@ function _renderWorkspaceDetail(ws){
   const body = $('workspaceDetailBody');
   const empty = $('workspaceDetailEmpty');
   if (!title || !body) return;
-  title.textContent = ws.name || ws.path;
+  title.textContent = _workspaceDisplayName(ws);
   const activePath = S.session ? S.session.workspace : '';
   const isActive = ws.path === activePath;
   const isDefault = !!ws.is_default;
@@ -4716,9 +4773,9 @@ function _renderWorkspaceDetail(ws){
   body.innerHTML = `
     <div class="main-view-content">
       <div class="detail-card">
-        <div class="detail-card-title">Space</div>
-        <div class="detail-row"><div class="detail-row-label">Name</div><div class="detail-row-value">${esc(ws.name || '')}</div></div>
-        <div class="detail-row"><div class="detail-row-label">Path</div><div class="detail-row-value"><code>${esc(ws.path)}</code></div></div>
+        <div class="detail-card-title">${_workspaceEntityLabel()}</div>
+        <div class="detail-row"><div class="detail-row-label">Name</div><div class="detail-row-value">${esc(_workspaceDisplayName(ws))}</div></div>
+        ${_hostedProjectsMode()?'':`<div class="detail-row"><div class="detail-row-label">Path</div><div class="detail-row-value"><code>${esc(ws.path)}</code></div></div>`}
         <div class="detail-row"><div class="detail-row-label">Status</div><div class="detail-row-value">${statusBadge}${defaultBadge}</div></div>
       </div>
       <div class="detail-card" style="margin-top:12px">
@@ -4791,7 +4848,14 @@ async function activateCurrentWorkspace(){
 async function deleteCurrentWorkspace(){
   if (!_currentWorkspaceDetail) return;
   const path = _currentWorkspaceDetail.path;
-  const _ok = await showConfirmDialog({title:t('workspace_remove_confirm_title'),message:t('workspace_remove_confirm_message',path),confirmLabel:t('remove'),danger:true,focusCancel:true});
+  const label=_workspaceDisplayName(_currentWorkspaceDetail);
+  const _ok = await showConfirmDialog({
+    title:_hostedProjectsMode()?'Remove project':t('workspace_remove_confirm_title'),
+    message:_hostedProjectsMode()?`Remove "${label}"?`:t('workspace_remove_confirm_message',path),
+    confirmLabel:t('remove'),
+    danger:true,
+    focusCancel:true
+  });
   if(!_ok) return;
   try{
     const data=await api('/api/workspaces/remove',{method:'POST',body:JSON.stringify({path})});
@@ -4813,7 +4877,7 @@ function editCurrentWorkspace(){
   if (!_currentWorkspaceDetail) return;
   _workspacePreFormDetail = { ..._currentWorkspaceDetail };
   _workspaceMode = 'edit';
-  _renderWorkspaceForm({ name: _currentWorkspaceDetail.name || '', path: _currentWorkspaceDetail.path || '', isEdit: true });
+  _renderWorkspaceForm({ name: _workspaceDisplayName(_currentWorkspaceDetail), path: _currentWorkspaceDetail.path || '', isEdit: true });
 }
 
 function _renderWorkspaceForm({ name, path, isEdit }){
@@ -4821,6 +4885,26 @@ function _renderWorkspaceForm({ name, path, isEdit }){
   const body = $('workspaceDetailBody');
   const empty = $('workspaceDetailEmpty');
   if (!title || !body) return;
+  if(_hostedProjectsMode()){
+    title.textContent = isEdit ? (t('edit') + ' · ' + (name || 'Project')) : 'New project';
+    body.innerHTML = `
+      <div class="main-view-content">
+        <form class="detail-form" onsubmit="event.preventDefault(); saveWorkspaceForm();">
+          <div class="detail-form-row">
+            <label for="workspaceFormName">Project name</label>
+            <input type="text" id="workspaceFormName" value="${esc(name || '')}" placeholder="Project name" autocomplete="off" required>
+          </div>
+          <div class="detail-form-hint">Projects are stored inside this hosted agent. Paths are managed automatically.</div>
+          <div id="workspaceFormError" class="detail-form-error" style="display:none"></div>
+        </form>
+      </div>`;
+    body.style.display = '';
+    if (empty) empty.style.display = 'none';
+    _setWorkspaceHeaderButtons(isEdit ? 'edit' : 'create');
+    const focus = $('workspaceFormName');
+    if (focus) focus.focus();
+    return;
+  }
   title.textContent = isEdit ? (t('edit') + ' · ' + (name || path)) : (t('workspace_new_title') || 'New space');
   const pathDisabled = isEdit ? 'disabled' : '';
   const pathHint = isEdit
@@ -4867,8 +4951,37 @@ async function saveWorkspaceForm(){
   const nameEl = $('workspaceFormName');
   const pathEl = $('workspaceFormPath');
   const errEl = $('workspaceFormError');
-  if (!pathEl || !errEl) return;
+  if (!errEl) return;
   const name = (nameEl ? nameEl.value : '').trim();
+  if(_hostedProjectsMode()){
+    errEl.style.display = 'none';
+    if(!name){errEl.textContent='Project name is required';errEl.style.display='';return;}
+    try{
+      if(_workspaceMode === 'edit' && _currentWorkspaceDetail){
+        const targetPath=_currentWorkspaceDetail.path;
+        await api('/api/workspaces/rename', { method:'POST', body: JSON.stringify({ path: targetPath, name }) });
+        const data=await api('/api/workspaces');
+        _workspaceList=data.workspaces||[];
+        _workspacePreFormDetail=null;
+        showToast('Project renamed');
+        renderWorkspacesPanel(_workspaceList);
+        openWorkspaceDetail(targetPath);
+        return;
+      }
+      const data=await api('/api/workspaces/add', { method:'POST', body: JSON.stringify({ name }) });
+      _workspaceList=data.workspaces||[];
+      _workspacePreFormDetail=null;
+      renderWorkspacesPanel(_workspaceList);
+      showToast('Project added');
+      const added=_workspaceList.find(w=>(w.name||'').toLowerCase()===name.toLowerCase())||_workspaceList[_workspaceList.length-1];
+      if(added)openWorkspaceDetail(added.path);
+    }catch(e){
+      errEl.textContent=(t('error_prefix')||'Error: ')+e.message;
+      errEl.style.display='';
+    }
+    return;
+  }
+  if (!pathEl) return;
   const path = (pathEl.value || '').trim();
   errEl.style.display = 'none';
   if (!path) { errEl.textContent = t('workspace_path_required') || 'Path is required'; errEl.style.display = ''; return; }
@@ -4957,7 +5070,14 @@ document.addEventListener('click',e=>{
 });
 
 async function removeWorkspace(path){
-  const _rmWs=await showConfirmDialog({title:t('workspace_remove_confirm_title'),message:t('workspace_remove_confirm_message',path),confirmLabel:t('remove'),danger:true,focusCancel:true});
+  const workspace=(_workspaceList||[]).find(w=>w.path===path)||{path,name:path};
+  const _rmWs=await showConfirmDialog({
+    title:_hostedProjectsMode()?'Remove project':t('workspace_remove_confirm_title'),
+    message:_hostedProjectsMode()?`Remove "${_workspaceDisplayName(workspace)}"?`:t('workspace_remove_confirm_message',path),
+    confirmLabel:t('remove'),
+    danger:true,
+    focusCancel:true
+  });
   if(!_rmWs) return;
   try{
     const data=await api('/api/workspaces/remove',{method:'POST',body:JSON.stringify({path})});
@@ -4968,6 +5088,10 @@ async function removeWorkspace(path){
 }
 
 async function promptWorkspacePath(){
+  if(_hostedProjectsMode()){
+    openWorkspaceCreate();
+    return;
+  }
   // Opus review Q6: if called from blank page (no session), auto-create one first.
   if(!S.session){
     const ws=(typeof S._profileDefaultWorkspace==='string'&&S._profileDefaultWorkspace)||'';

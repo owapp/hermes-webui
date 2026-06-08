@@ -3308,6 +3308,96 @@ from api.workspace import (
     _workspace_blocked_roots,
 )
 from api.upload import handle_upload, handle_upload_extract, handle_transcribe, handle_workspace_upload
+
+
+def _hosted_workspace_mode_enabled() -> bool:
+    return os.environ.get("HERMES_LAYER_HOSTED_ONBOARDING", "").strip().lower() in {"1", "true", "yes"}
+
+
+def _hosted_projects_root() -> Path:
+    root = Path(os.environ.get("HERMES_LAYER_PROJECTS_ROOT", "") or (Path(DEFAULT_WORKSPACE) / "projects"))
+    root = root.expanduser().resolve()
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def _slugify_hosted_project_name(name: str) -> str:
+    slug = re.sub(r"[^a-zA-Z0-9._-]+", "-", name.strip().lower())
+    slug = re.sub(r"-+", "-", slug).strip("-._")
+    return (slug[:80].strip("-._") or f"project-{uuid.uuid4().hex[:8]}")
+
+
+def _is_hosted_default_workspace(path: str | Path) -> bool:
+    try:
+        return Path(path).expanduser().resolve() == Path(DEFAULT_WORKSPACE).expanduser().resolve()
+    except Exception:
+        return False
+
+
+def _is_hosted_project_path(path: str | Path) -> bool:
+    try:
+        Path(path).expanduser().resolve().relative_to(_hosted_projects_root())
+        return True
+    except Exception:
+        return False
+
+
+def _hosted_workspace_display_name(workspace: dict) -> str:
+    name = str(workspace.get("name") or "").strip()
+    path = str(workspace.get("path") or "").strip()
+    if _is_hosted_default_workspace(path):
+        return "Main project" if not name or name == "Home" else name
+    if name:
+        return name
+    return Path(path).name.replace("-", " ").replace("_", " ").strip().title() or "Project"
+
+
+def _hosted_public_workspaces(workspaces: list) -> list:
+    public = []
+    for workspace in workspaces:
+        path = workspace.get("path", "")
+        if not (_is_hosted_default_workspace(path) or _is_hosted_project_path(path)):
+            continue
+        item = dict(workspace)
+        item["name"] = _hosted_workspace_display_name(item)
+        item["hosted_project"] = True
+        item["is_default"] = _is_hosted_default_workspace(item.get("path", ""))
+        public.append(item)
+    return public
+
+
+def _handle_hosted_project_add(handler, body):
+    name = str(body.get("name") or body.get("project") or "").strip()
+    if not name:
+        return bad(handler, "Project name is required")
+
+    root = _hosted_projects_root()
+    base_slug = _slugify_hosted_project_name(name)
+    workspaces = load_workspaces()
+    existing_paths = {str(Path(w["path"]).expanduser().resolve()) for w in workspaces if w.get("path")}
+    existing_names = {_hosted_workspace_display_name(w).strip().lower() for w in workspaces}
+    if name.lower() in existing_names:
+        return bad(handler, "Project already exists")
+
+    candidate = None
+    for idx in range(100):
+        slug = base_slug if idx == 0 else f"{base_slug}-{idx + 1}"
+        attempt = (root / slug).resolve()
+        if str(attempt) not in existing_paths and not attempt.exists():
+            candidate = attempt
+            break
+    if candidate is None:
+        return bad(handler, "Could not allocate a project path")
+
+    try:
+        candidate.mkdir(parents=True, exist_ok=False)
+        project_path = validate_workspace_to_add(str(candidate))
+    except (OSError, PermissionError, ValueError) as e:
+        return bad(handler, f"Could not create project: {_sanitize_error(e)}")
+
+    workspaces.append({"path": str(project_path), "name": name})
+    save_workspaces(workspaces)
+    return j(handler, {"ok": True, "workspaces": _hosted_public_workspaces(workspaces)})
 from api.streaming import (
     _sse,
     _run_agent_streaming,
@@ -5866,16 +5956,24 @@ def handle_get(handler, parsed) -> bool:
         return _handle_session_export(handler, parsed)
 
     if parsed.path == "/api/workspaces":
+        workspaces = load_workspaces()
+        if _hosted_workspace_mode_enabled():
+            workspaces = _hosted_public_workspaces(workspaces)
         return j(
             handler,
             {
-                "workspaces": load_workspaces(),
+                "workspaces": workspaces,
                 "last": get_last_workspace(),
                 "terminal_remote_backend": _terminal_remote_backend_enabled(),
+                "hosted": {
+                    "projects": _hosted_workspace_mode_enabled(),
+                },
             },
         )
 
     if parsed.path == "/api/workspaces/suggest":
+        if _hosted_workspace_mode_enabled():
+            return j(handler, {"suggestions": [], "prefix": ""})
         qs = parse_qs(parsed.query)
         prefix = qs.get("prefix", [""])[0]
         return j(
@@ -13040,6 +13138,9 @@ def _handle_file_open_vscode(handler, body):
 
 
 def _handle_workspace_add(handler, body):
+    if _hosted_workspace_mode_enabled():
+        return _handle_hosted_project_add(handler, body)
+
     # Strip surrounding paired quotes BEFORE any further processing — macOS
     # Finder's "Copy as Pathname" wraps paths in single quotes, and users
     # routinely paste those quoted strings into the Add Space input.
@@ -13082,9 +13183,16 @@ def _handle_workspace_remove(handler, body):
     path_str = body.get("path", "").strip()
     if not path_str:
         return bad(handler, "path is required")
+    if _hosted_workspace_mode_enabled():
+        if _is_hosted_default_workspace(path_str):
+            return bad(handler, "Default project cannot be removed")
+        if not _is_hosted_project_path(path_str):
+            return bad(handler, "Project is outside the hosted project root")
     wss = load_workspaces()
     wss = [w for w in wss if w["path"] != path_str]
     save_workspaces(wss)
+    if _hosted_workspace_mode_enabled():
+        wss = _hosted_public_workspaces(wss)
     return j(handler, {"ok": True, "workspaces": wss})
 
 
@@ -13093,6 +13201,8 @@ def _handle_workspace_rename(handler, body):
     name = body.get("name", "").strip()
     if not path_str or not name:
         return bad(handler, "path and name are required")
+    if _hosted_workspace_mode_enabled() and not (_is_hosted_default_workspace(path_str) or _is_hosted_project_path(path_str)):
+        return bad(handler, "Project is outside the hosted project root")
     wss = load_workspaces()
     for w in wss:
         if w["path"] == path_str:
@@ -13101,6 +13211,8 @@ def _handle_workspace_rename(handler, body):
     else:
         return bad(handler, "Workspace not found", 404)
     save_workspaces(wss)
+    if _hosted_workspace_mode_enabled():
+        wss = _hosted_public_workspaces(wss)
     return j(handler, {"ok": True, "workspaces": wss})
 
 
@@ -13129,6 +13241,8 @@ def _handle_workspace_reorder(handler, body):
         if w["path"] not in seen:
             reordered.append(w)
     save_workspaces(reordered)
+    if _hosted_workspace_mode_enabled():
+        reordered = _hosted_public_workspaces(reordered)
     return j(handler, {"ok": True, "workspaces": reordered})
 
 
