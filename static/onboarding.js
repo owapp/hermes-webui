@@ -20,7 +20,7 @@ function _configureOnboardingMode(){
   if(hosted){
     if(badge)badge.textContent='HOSTED SETUP';
     if(title)title.textContent='Configure your hosted Hermes Agent';
-    if(lead)lead.textContent='Connect a provider, choose the model and open your first hosted Hermes workspace. Hermes Layer manages access and the runtime behind this console.';
+    if(lead)lead.textContent='Connect a provider, choose the model and open your first hosted Hermes workspace.';
     if(skip){
       skip.textContent=_hostedOnboardingReady()?'Finish later':'Provider required';
       skip.disabled=!_hostedOnboardingReady();
