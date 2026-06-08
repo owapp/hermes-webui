@@ -426,9 +426,9 @@
       '</div>' +
       '<div class="hl-action-grid">' +
         '<button class="hl-surface-button ' + (primaryAction === 'start' ? 'is-primary' : '') + '" type="button" data-hl-workspace-action="start" ' + (busy || isBusyState || !canStart ? 'disabled' : '') + '>Start agent</button>' +
-        '<button class="hl-surface-button ' + (primaryAction === 'restart' ? 'is-primary' : '') + '" type="button" data-hl-workspace-action="restart" ' + (busy || isBusyState || !canRestart ? 'disabled' : '') + '>Restart agent</button>' +
+        '<button class="hl-surface-button is-warning" type="button" data-hl-workspace-action="restart" ' + (busy || isBusyState || !canRestart ? 'disabled' : '') + '>Restart agent</button>' +
         '<button class="hl-surface-button ' + (primaryAction === 'recover' ? 'is-primary' : '') + '" type="button" data-hl-workspace-action="recover" ' + (busy || isBusyState || !canRecover ? 'disabled' : '') + '>Recover agent</button>' +
-        '<button class="hl-surface-button" type="button" data-hl-workspace-action="stop" ' + (busy || isBusyState || !canStop ? 'disabled' : '') + '>Stop agent</button>' +
+        '<button class="hl-surface-button is-danger" type="button" data-hl-workspace-action="stop" ' + (busy || isBusyState || !canStop ? 'disabled' : '') + '>Stop agent</button>' +
       '</div>';
     var root = surfaceShell(
       'Agent status',
