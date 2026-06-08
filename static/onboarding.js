@@ -273,17 +273,15 @@ function _providerStatusLabel(system){
   return t('onboarding_check_provider_pending');
 }
 
-function _renderHostedRuntimeSummary(){
+function _renderHostedFinishCards(){
   if(!_isHostedOnboarding())return '';
   const system=(ONBOARDING.status||{}).system||{};
   const hosted=(ONBOARDING.status||{}).hosted||{};
   const hermesOk=system.hermes_found&&system.imports_ok;
-  const providerState=system.chat_ready?'Ready to chat':(system.provider_configured?'Saved, credentials pending':'Needs setup');
   return `
     <div class="onboarding-panel-grid onboarding-hosted-summary">
       <div class="onboarding-check ${hermesOk?'ok':'warn'}"><strong>Hermes Agent</strong><span>${hermesOk?'Ready':'Starting'}</span></div>
       <div class="onboarding-check ${hosted.headroom?'ok':'muted'}"><strong>Context optimization</strong><span>${hosted.headroom?'Headroom active':'Not enabled'}</span></div>
-      <div class="onboarding-check ${system.chat_ready?'ok':system.provider_configured?'warn':'muted'}"><strong>Provider</strong><span>${providerState}</span></div>
     </div>`;
 }
 
@@ -391,7 +389,6 @@ function _renderOnboardingBody(){
       system.chat_ready?'success':'info'
     );
     body.innerHTML=`
-      ${_renderHostedRuntimeSummary()}
       <label class="onboarding-field">
         <span>${t('onboarding_provider_label')}</span>
         <select id="onboardingProviderSelect" onchange="syncOnboardingProvider(this.value)">${groupedOptions}</select>
@@ -439,12 +436,13 @@ function _renderOnboardingBody(){
   const provider=_getOnboardingSetupProvider(ONBOARDING.form.provider);
   _setOnboardingNotice(t('onboarding_notice_finish'), 'success');
   body.innerHTML=`
+    ${_renderHostedFinishCards()}
     <div class="onboarding-summary">
       <div><strong>${t('onboarding_provider_label')}</strong><span>${esc((provider&&provider.label)||ONBOARDING.form.provider||t('onboarding_not_set'))}</span></div>
       <div><strong>${t('onboarding_model_label')}</strong><span>${esc(_getOnboardingSelectedModel()||t('onboarding_not_set'))}</span></div>
       <div><strong>${t('onboarding_workspace_label')}</strong><span>${esc(ONBOARDING.form.workspace||t('onboarding_not_set'))}</span></div>
       ${_isHostedOnboarding()
-        ? `<div><strong>Context optimization</strong><span>${((ONBOARDING.status||{}).hosted||{}).headroom?'Headroom active':'Not enabled'}</span></div>`
+        ? ''
         : `<div><strong>${t('onboarding_check_password')}</strong><span>${t(_getOnboardingPasswordSummaryKey(settings))}</span></div>`}
     </div>
     ${ONBOARDING.form.baseUrl?`<p class="onboarding-copy"><strong>${t('onboarding_base_url_label')}</strong> ${esc(ONBOARDING.form.baseUrl)}</p>`:''}
