@@ -101,6 +101,7 @@ def test_account_menu_is_avatar_based_not_a_brand_overlay_button():
 
 def test_hosted_layer_surfaces_use_agent_language_not_infra_labels():
     assert "Control your hosted Hermes Agent through Hermes Layer." in HERMES_LAYER_JS
+    assert "Archives restore Hermes/WebUI data and Headroom context data together" in HERMES_LAYER_JS
     assert "Agent service" in HERMES_LAYER_JS
     assert "Current agent data will be replaced." in HERMES_LAYER_JS
     assert "Optimizer service" in HERMES_LAYER_JS
@@ -108,6 +109,8 @@ def test_hosted_layer_surfaces_use_agent_language_not_infra_labels():
     assert "Tool bridge" in HERMES_LAYER_JS
     assert "Control your hosted Hermes Agent runtime" not in HERMES_LAYER_JS
     assert "Current runtime data will be replaced." not in HERMES_LAYER_JS
+    assert "Hermes/WebUI volume" not in HERMES_LAYER_JS
+    assert "Headroom volume" not in HERMES_LAYER_JS
     assert "statusItem('Runtime'" not in HERMES_LAYER_JS
     assert "statusItem('Sidecar'" not in HERMES_LAYER_JS
     assert "statusItem('Plugin'" not in HERMES_LAYER_JS

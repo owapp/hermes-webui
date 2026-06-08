@@ -694,7 +694,7 @@
     }).join('');
     var body =
       '<div class="hl-surface-row">' +
-        '<div><h3>Full Workspace Backup</h3><p>Archives restore the Hermes/WebUI volume and the Headroom volume together after checksum verification. Exports can be imported back into this workspace.</p></div>' +
+        '<div><h3>Full Workspace Backup</h3><p>Archives restore Hermes/WebUI data and Headroom context data together after checksum verification. Exports can be imported back into this workspace.</p></div>' +
         '<div class="hl-surface-actions">' +
           '<button class="hl-surface-button" type="button" data-hl-import-backup-button ' + (busy ? 'disabled' : '') + '>Import backup</button>' +
           '<button class="hl-surface-button is-primary" type="button" data-hl-create-backup ' + (busy ? 'disabled' : '') + '>Create backup</button>' +
