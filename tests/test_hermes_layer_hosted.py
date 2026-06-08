@@ -95,8 +95,10 @@ def test_bridge_only_adds_layer_csrf_to_agent_scoped_fetches():
     assert "function requestInitFromFetchInput" in HERMES_LAYER_JS
     assert "input instanceof Request" in HERMES_LAYER_JS
     assert "input.clone().body" in HERMES_LAYER_JS
-    assert "if (!scoped) return originalFetch(input, init);" in HERMES_LAYER_JS
+    assert "function isAgentGatewayUrl(url)" in HERMES_LAYER_JS
+    assert "function alreadyScopedToAgent(input)" in HERMES_LAYER_JS
     assert "return originalFetch(scoped, addLayerCsrf(input, opts));" in HERMES_LAYER_JS
+    assert "return originalFetch(input, addLayerCsrf(input, opts));" in HERMES_LAYER_JS
     assert "return originalBeacon(scoped || url, data);" in HERMES_LAYER_JS
 
 

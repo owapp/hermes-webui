@@ -40,18 +40,32 @@
       || /^\/stream(?:\/|$)/.test(url.pathname);
   }
 
-  function agentScopedUrl(input){
+  function isAgentGatewayUrl(url){
+    return /^\/agent\/[^/]+\/api(?:\/|$)/.test(url.pathname)
+      || /^\/agent\/[^/]+\/stream(?:\/|$)/.test(url.pathname)
+      || /^\/agent\/[^/]+\/health$/.test(url.pathname);
+  }
+
+  function fetchInputUrl(input){
     var raw = '';
     if (typeof input === 'string') raw = input;
     else if (input instanceof URL) raw = input.href;
     else if (input && typeof input.url === 'string') raw = input.url;
     else return null;
+    return sameOriginUrl(raw);
+  }
 
-    var url = sameOriginUrl(raw);
+  function agentScopedUrl(input){
+    var url = fetchInputUrl(input);
     if (!url || !shouldRouteThroughAgent(url)) return null;
 
     var rel = url.pathname.replace(/^\/+/, '') + url.search + url.hash;
     return new URL(rel, currentAgentBase()).href;
+  }
+
+  function alreadyScopedToAgent(input){
+    var url = fetchInputUrl(input);
+    return !!(url && isAgentGatewayUrl(url));
   }
 
   function unsafe(method){
@@ -96,9 +110,10 @@
   if (originalFetch) {
     window.fetch = function(input, init){
       var scoped = agentScopedUrl(input);
-      if (!scoped) return originalFetch(input, init);
       var opts = requestInitFromFetchInput(input, init);
-      return originalFetch(scoped, addLayerCsrf(input, opts));
+      if (scoped) return originalFetch(scoped, addLayerCsrf(input, opts));
+      if (alreadyScopedToAgent(input)) return originalFetch(input, addLayerCsrf(input, opts));
+      return originalFetch(input, init);
     };
 
     if (navigator.sendBeacon) {
