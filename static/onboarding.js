@@ -282,8 +282,8 @@ function _renderHostedRuntimeSummary(){
   return `
     <div class="onboarding-panel-grid onboarding-hosted-summary">
       <div class="onboarding-check ${hermesOk?'ok':'warn'}"><strong>Hermes Agent</strong><span>${hermesOk?'Ready':'Starting'}</span></div>
-      <div class="onboarding-check ${system.chat_ready?'ok':system.provider_configured?'warn':'muted'}"><strong>Provider</strong><span>${providerState}</span></div>
       <div class="onboarding-check ${hosted.headroom?'ok':'muted'}"><strong>Context optimization</strong><span>${hosted.headroom?'Headroom active':'Not enabled'}</span></div>
+      <div class="onboarding-check ${system.chat_ready?'ok':system.provider_configured?'warn':'muted'}"><strong>Provider</strong><span>${providerState}</span></div>
     </div>`;
 }
 
