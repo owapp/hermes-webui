@@ -3683,7 +3683,7 @@ button:hover{background:rgba(124,185,255,.25)}
 .err{color:#e94560;font-size:12px;margin-top:10px;display:none}
 </style></head><body>
 <div class="card">
-  <div class="logo"><img src="static/favicon.svg?v=hl-logo-20260609c" alt=""></div>
+  <div class="logo"><img src="static/favicon.svg?v=hl-logo-20260609d" alt=""></div>
   <h1>{{BOT_NAME}}</h1>
   <p class="sub">{{LOGIN_SUBTITLE}}</p>
   <form id="login-form" data-invalid-pw="{{LOGIN_INVALID_PW}}" data-conn-failed="{{LOGIN_CONN_FAILED}}">
