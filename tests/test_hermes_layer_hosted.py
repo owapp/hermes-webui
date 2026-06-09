@@ -193,6 +193,8 @@ def test_hosted_mode_uses_hermes_layer_favicons():
     assert png_size(STATIC / "favicon-512.png") == (512, 512)
     assert png_size(STATIC / "apple-touch-icon.png") == (512, 512)
     assert (STATIC / "favicon.ico").read_bytes().startswith(b"\x00\x00\x01\x00")
+    assert '<div class="logo"><img src="static/favicon.svg" alt=""></div>' in ROUTES_PY
+    assert "{{BOT_NAME_INITIAL}}" not in ROUTES_PY
 
 
 def test_bridge_only_adds_layer_csrf_to_agent_scoped_fetches():
