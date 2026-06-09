@@ -8,15 +8,15 @@
      MUST appear before manifest/favicon links so browsers resolve relative URLs against the
      correct base when the page is served from /session/<id> routes. See #2226. -->
 <script>(function(){var path=location.pathname,marker='/session/',i=path.indexOf(marker),p;i>=0?p=(path.slice(0,i+1)||'/'):p=(path.endsWith('/')?path:(path.replace(/\/[^\/]*$/,'/')||'/'));document.write('<base href="'+location.origin+p+'">');})()</script>
-<link rel="icon" type="image/svg+xml" href="static/favicon.svg?v=hl-logo-20260609e">
-<link rel="icon" type="image/png" sizes="32x32" href="static/favicon-32.png?v=hl-logo-20260609e">
-<link rel="shortcut icon" href="static/favicon.ico?v=hl-logo-20260609e">
-<link rel="manifest" href="manifest.json?v=hl-logo-20260609e" crossorigin="use-credentials">
+<link rel="icon" type="image/svg+xml" href="static/favicon.svg?v=hl-logo-20260609f">
+<link rel="icon" type="image/png" sizes="32x32" href="static/favicon-32.png?v=hl-logo-20260609f">
+<link rel="shortcut icon" href="static/favicon.ico?v=hl-logo-20260609f">
+<link rel="manifest" href="manifest.json?v=hl-logo-20260609f" crossorigin="use-credentials">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Hermes Layer">
-<link rel="apple-touch-icon" sizes="512x512" href="static/apple-touch-icon.png?v=hl-logo-20260609e">
+<link rel="apple-touch-icon" sizes="512x512" href="static/apple-touch-icon.png?v=hl-logo-20260609f">
 <script>(function(){try{var themes={light:1,dark:1,system:1},skins={default:1,ares:1,mono:1,graphite:1,slate:1,poseidon:1,sisyphus:1,charizard:1,sienna:1,catppuccin:1,hepburn:1,nous:1,'geist-contrast':1,neon:1,zeus:1,'verdigris':1},legacy={slate:['dark','slate'],solarized:['dark','poseidon'],monokai:['dark','sisyphus'],nord:['dark','slate'],oled:['dark','default']},t=(localStorage.getItem('hermes-theme')||'dark').toLowerCase(),s=(localStorage.getItem('hermes-skin')||'').toLowerCase(),m=legacy[t],theme=m?m[0]:(themes[t]?t:'dark'),skin=skins[s]?s:(m?m[1]:'default');localStorage.setItem('hermes-theme',theme);localStorage.setItem('hermes-skin',skin);if(theme==='system')theme=window.matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light';if(theme==='dark')document.documentElement.classList.add('dark');if(skin!=='default')document.documentElement.dataset.skin=skin;}catch(e){document.documentElement.classList.add('dark');}})()</script>
 <script>(function(){try{var fs=localStorage.getItem('hermes-font-size');if(fs&&fs!=='default')document.documentElement.dataset.fontSize=fs;}catch(e){}})()</script>
 <!-- theme-color: surfaces the active app chrome color to native status bars (Safari status bar, PWA, native WKWebView wrappers). Updated dynamically by boot.js when theme/skin changes. The light/dark default values match style.css :root --sidebar / :root.dark --sidebar. -->
@@ -127,7 +127,7 @@
   </button>
   <div class="app-titlebar-inner">
     <span class="app-titlebar-icon" aria-hidden="true">
-      <img src="static/favicon.svg?v=hl-logo-20260609e" width="16" height="16" alt="">
+      <img src="static/favicon.svg?v=hl-logo-20260609f" width="16" height="16" alt="">
     </span>
     <span class="app-titlebar-title" id="appTitlebarTitle">Hermes</span>
     <span class="app-titlebar-sub" id="appTitlebarSub" hidden></span>
@@ -376,7 +376,7 @@
       <button id="scrollToBottomBtn" class="scroll-to-bottom-btn" style="display:none" onclick="scrollToBottom()" aria-label="Scroll to bottom" data-i18n-aria-label="session_jump_end_label" data-i18n-title="session_jump_end_label"><span aria-hidden="true">↓</span><span class="session-jump-btn__text" data-i18n="session_jump_end">End</span></button>
     <div class="messages" id="messages">
       <div class="empty-state" id="emptyState">
-        <div class="empty-logo"><img src="static/favicon.svg?v=hl-logo-20260609e" width="80" height="80" alt=""></div>
+        <div class="empty-logo"><img src="static/favicon.svg?v=hl-logo-20260609f" width="80" height="80" alt=""></div>
         <h2 data-i18n="empty_title">What can I help with?</h2>
         <p data-i18n="empty_subtitle">Ask anything, run commands, explore files, or manage your scheduled tasks.</p>
         <div class="suggestion-grid">

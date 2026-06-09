@@ -21,7 +21,7 @@ const CACHE_NAME = 'hermes-shell-__WEBUI_VERSION__';
 // can make valid password submits fail until the user clears browser cache.
 // Navigations populate './' only after a successful non-redirect network load.
 const VQ = '?v=__WEBUI_VERSION__';
-const BRAND_VQ = '?v=hl-logo-20260609e';
+const BRAND_VQ = '?v=hl-logo-20260609f';
 const SHELL_ASSETS = [
   './static/style.css' + VQ,
   './static/pwa-startup.js' + VQ,
