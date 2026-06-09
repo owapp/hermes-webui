@@ -1692,7 +1692,7 @@ function applyBotName(){
   const sidebarH1=document.querySelector('.sidebar-header h1');
   if(sidebarH1) sidebarH1.textContent=name;
   const logo=document.querySelector('.sidebar-header .logo');
-  if(logo) logo.innerHTML='<img src="static/logo.svg?v=hl-logo-20260609i" alt="">';
+  if(logo) logo.innerHTML='<img src="static/logo.svg?v=hl-logo-20260609j" alt="">';
   const topbarTitle=$('topbarTitle');
   if(topbarTitle && (!S.session)) topbarTitle.textContent=name;
   const msg=$('msg');
