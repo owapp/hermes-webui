@@ -1907,6 +1907,7 @@ function applyBotName(){
   // them. The sidebar can render from /api/sessions while workspace/onboarding
   // metadata settles in parallel.
   const _workspaceListReady=loadWorkspaceList();
+  if(_bootSettings.onboarding_completed&&typeof _setHostedBootBlocked==='function')_setHostedBootBlocked(false);
   const _onboardingReady=_bootSettings.onboarding_completed?Promise.resolve(false):loadOnboardingWizard();
   // Render the session list before restoring the saved conversation so a stale
   // saved-session/client-side boot error cannot leave the sidebar empty forever.

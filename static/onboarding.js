@@ -4,6 +4,11 @@ function _isHostedOnboarding(){
   return !!(((ONBOARDING.status||{}).hosted||{}).enabled);
 }
 
+function _setHostedBootBlocked(blocked){
+  const blocker=document.getElementById('hermes-layer-boot-blocker');
+  if(blocker)blocker.hidden=!blocked;
+}
+
 function _hostedOnboardingReady(){
   const system=(ONBOARDING.status||{}).system||{};
   return !!system.chat_ready;
@@ -682,14 +687,19 @@ async function loadOnboardingWizard(){
     ONBOARDING.form.apiKey='';
     ONBOARDING.form.baseUrl=current.base_url||'';
     ONBOARDING.active=!status.completed;
-    if(!ONBOARDING.active) return false;
+    if(!ONBOARDING.active){
+      _setHostedBootBlocked(false);
+      return false;
+    }
     _configureOnboardingMode();
     if(_isHostedOnboarding()&&ONBOARDING.form.configMode==='managed')_refreshManagedCredits();
     $('onboardingOverlay').style.display='flex';
+    _setHostedBootBlocked(false);
     _renderOnboardingSteps();
     _renderOnboardingBody();
     return true;
   }catch(e){
+    _setHostedBootBlocked(false);
     console.warn('onboarding status failed',e);
     return false;
   }

@@ -587,6 +587,31 @@
     button.setAttribute('aria-expanded', String(open));
   }
 
+  function accountIconMarkup(){
+    return '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>';
+  }
+
+  function bindAccountButton(root){
+    var button = root.querySelector('[data-hl-account-button]');
+    if (!button) return;
+    button.addEventListener('click', function(event){
+      event.stopPropagation();
+      var menu = root.querySelector('[data-hl-account-menu]');
+      setOpen(root, !!(menu && menu.hidden));
+    });
+  }
+
+  function renderAccountLoadingMenu(root, message){
+    root.hidden = false;
+    root.classList.add('is-loading');
+    root.innerHTML =
+      '<button class="hl-account-avatar is-loading" type="button" data-hl-account-button aria-haspopup="menu" aria-expanded="false" aria-label="Account menu">' + accountIconMarkup() + '</button>' +
+      '<div class="hl-account-menu hl-account-menu-loading" data-hl-account-menu hidden role="menu" aria-label="Account">' +
+        '<div class="hl-account-loading">' + escapeHtml(message || 'Loading account...') + '</div>' +
+      '</div>';
+    bindAccountButton(root);
+  }
+
   function humanizeSubscriptionValue(value){
     var text = String(value || 'none').replace(/[-_]+/g, ' ').trim();
     if (!text) return 'None';
@@ -627,7 +652,6 @@
     var subscription = payload && payload.subscription ? payload.subscription : {};
     var aiCredits = payload && payload.aiCredits ? payload.aiCredits : null;
     var links = payload && Array.isArray(payload.links) ? payload.links : [];
-    var initials = account.initials || 'U';
     var name = account.name || account.email || 'Account';
     var email = account.email || '';
     var linkMarkup = links.map(function(link){
@@ -639,8 +663,9 @@
     }).join('');
 
     root.hidden = false;
+    root.classList.remove('is-loading');
     root.innerHTML =
-      '<button class="hl-account-avatar" type="button" data-hl-account-button aria-haspopup="menu" aria-expanded="false" aria-label="Account menu">' + escapeHtml(initials) + '</button>' +
+      '<button class="hl-account-avatar" type="button" data-hl-account-button aria-haspopup="menu" aria-expanded="false" aria-label="Account menu">' + accountIconMarkup() + '</button>' +
       '<div class="hl-account-menu" data-hl-account-menu hidden role="menu" aria-label="Account">' +
         '<div class="hl-account-profile">' +
           '<div class="hl-account-name">' + escapeHtml(name) + '</div>' +
@@ -654,15 +679,8 @@
         '<button class="hl-account-logout" type="button" data-hl-account-logout role="menuitem">Log out</button>' +
       '</div>';
 
-    var button = root.querySelector('[data-hl-account-button]');
     var logout = root.querySelector('[data-hl-account-logout]');
-    if (button) {
-      button.addEventListener('click', function(event){
-        event.stopPropagation();
-        var menu = root.querySelector('[data-hl-account-menu]');
-        setOpen(root, !!(menu && menu.hidden));
-      });
-    }
+    bindAccountButton(root);
     if (logout && originalFetch) {
       logout.addEventListener('click', function(){
         agentApiJson('api/hermes-layer/logout', { method: 'POST' }).finally(function(){
@@ -687,6 +705,7 @@
       console.error('Hermes Layer account integration anchor missing. Review the pinned WebUI update.');
       return;
     }
+    renderAccountLoadingMenu(root);
     if (!originalFetch) return;
     originalFetch(sessionUrl(), { credentials: 'include' })
       .then(function(response){ return response.ok ? response.json() : null; })
@@ -694,6 +713,7 @@
         if (payload) renderAccountMenu(root, payload);
       })
       .catch(function(error){
+        renderAccountLoadingMenu(root, 'Account unavailable. Reload this page to retry.');
         console.error('Hermes Layer account session failed', error);
       });
   }

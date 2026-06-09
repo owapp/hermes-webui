@@ -32,6 +32,8 @@ def test_account_avatar_mount_is_part_of_the_webui_titlebar():
     assert '<script src="static/hermes-layer.js?v=__WEBUI_VERSION__"></script>' in HTML
     assert 'id="hermes-layer-account"' in HTML
     assert "data-hermes-layer-account" in HTML
+    assert '<div id="hermes-layer-account" class="hl-account is-loading"' in HTML
+    assert 'Loading account...' in HTML
 
     account_pos = HTML.index('id="hermes-layer-account"')
     reload_pos = HTML.index('id="btnReload"')
@@ -56,36 +58,29 @@ def test_standalone_hosted_controls_are_removed_from_markup():
         assert f'id="{element_id}"' not in HTML, f"{element_id} must not be visible in hosted WebUI"
 
 
-def test_hermes_layer_bridge_owns_account_billing_backups_support_and_headroom_routes():
+def test_hermes_layer_bridge_owns_workspace_backups_and_headroom_routes():
     required_routes = [
         "api/hermes-layer/session",
         "api/hermes-layer/workspace",
         "api/hermes-layer/workspace/action",
-        "api/hermes-layer/account",
-        "api/hermes-layer/account/profile",
-        "api/hermes-layer/account/password",
         "api/hermes-layer/logout",
-        "api/hermes-layer/billing/config",
-        "api/hermes-layer/billing/state",
-        "api/hermes-layer/billing/checkout",
-        "api/hermes-layer/billing/portal",
-        "api/hermes-layer/billing/sync-checkout",
         "api/hermes-layer/backups",
         "api/hermes-layer/backups/import",
         "api/hermes-layer/restore",
-        "api/hermes-layer/support/tickets",
         "api/hermes-layer/headroom",
         "api/hermes-layer/headroom/stats",
     ]
     for route in required_routes:
         assert route in HERMES_LAYER_JS
 
-    required_actions = ["workspace", "account", "billing", "optimization", "backups", "support"]
+    required_actions = ["workspace", "optimization", "backups"]
     assert "data-hl-action" in HERMES_LAYER_JS
     assert "data-hl-account-logout" in HERMES_LAYER_JS
     assert "data-hl-workspace-action" in HERMES_LAYER_JS
     assert "data-hl-import-backup-button" in HERMES_LAYER_JS
     assert "shouldSetJsonContentType" in HERMES_LAYER_JS
+    assert "link.href" in HERMES_LAYER_JS
+    assert "link.target" in HERMES_LAYER_JS
     assert "Agent status" in HERMES_LAYER_JS
     for action in required_actions:
         assert f"'{action}'" in HERMES_LAYER_JS or f'"{action}"' in HERMES_LAYER_JS
@@ -93,6 +88,10 @@ def test_hermes_layer_bridge_owns_account_billing_backups_support_and_headroom_r
 
 def test_account_menu_is_avatar_based_not_a_brand_overlay_button():
     assert '<button class="hl-account-avatar"' in HERMES_LAYER_JS
+    assert "function accountIconMarkup()" in HERMES_LAYER_JS
+    assert "function renderAccountLoadingMenu(root, message)" in HERMES_LAYER_JS
+    assert "renderAccountLoadingMenu(root);" in HERMES_LAYER_JS
+    assert "Loading account..." in HERMES_LAYER_JS
     assert 'aria-label="Account menu"' in HERMES_LAYER_JS
     assert 'data-hl-account-menu hidden role="menu"' in HERMES_LAYER_JS
     assert 'data-hl-account-button' in HERMES_LAYER_JS
@@ -107,6 +106,17 @@ def test_account_menu_is_avatar_based_not_a_brand_overlay_button():
     assert ".hl-account-subscription" in STYLE_CSS
     assert ".hl-account-subscription.is-ok" in STYLE_CSS
     assert ".hl-account-subscription.is-warn" in STYLE_CSS
+    assert ".hl-account-avatar.is-loading" in STYLE_CSS
+    assert ".hl-account-loading" in STYLE_CSS
+
+
+def test_hosted_first_run_blocks_interaction_until_onboarding_status_resolves():
+    assert 'id="hermes-layer-boot-blocker"' in HTML
+    assert ".hl-hosted-boot-blocker" in STYLE_CSS
+    assert "z-index:1040" in STYLE_CSS
+    assert "function _setHostedBootBlocked(blocked)" in (STATIC / "onboarding.js").read_text(encoding="utf-8")
+    assert "_setHostedBootBlocked(false);" in (STATIC / "onboarding.js").read_text(encoding="utf-8")
+    assert "if(_bootSettings.onboarding_completed&&typeof _setHostedBootBlocked==='function')_setHostedBootBlocked(false);" in BOOT_JS
 
 
 def test_hosted_layer_surfaces_use_agent_language_not_infra_labels():

@@ -118,6 +118,9 @@
   </script>
 </head>
 <body>
+<div id="hermes-layer-boot-blocker" class="hl-hosted-boot-blocker" role="status" aria-live="polite" aria-label="Preparing agent setup">
+  <div class="hl-hosted-boot-spinner" aria-hidden="true"></div>
+</div>
 <header class="app-titlebar" role="banner">
   <button class="app-titlebar-hamburger has-tooltip has-tooltip--bottom" id="btnHamburger" onclick="toggleMobileSidebar()" type="button" data-tooltip="Menu" aria-label="Menu">
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
@@ -141,7 +144,14 @@
     <span class="app-titlebar-sub" id="appTitlebarSub" hidden></span>
   </div>
   <div class="app-titlebar-spacer" aria-hidden="true"></div>
-  <div id="hermes-layer-account" class="hl-account" data-hermes-layer-account hidden></div>
+  <div id="hermes-layer-account" class="hl-account is-loading" data-hermes-layer-account>
+    <button class="hl-account-avatar is-loading" type="button" data-hl-account-button aria-haspopup="menu" aria-expanded="false" aria-label="Account menu">
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+    </button>
+    <div class="hl-account-menu hl-account-menu-loading" data-hl-account-menu hidden role="menu" aria-label="Account">
+      <div class="hl-account-loading">Loading account...</div>
+    </div>
+  </div>
   <button class="app-titlebar-reload" id="btnReload" onclick="window.location.reload()" type="button" aria-label="Reload" title="Reload page">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" width="16" height="16">
       <polyline points="23 4 23 10 17 10"/>
