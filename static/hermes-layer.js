@@ -272,32 +272,10 @@
     return root;
   }
 
-  function openOptimizationSurface(){
-    surfaceShell(
-      'Context Optimization',
-      'Headroom runs inside this isolated workspace and reports redacted aggregate metrics.',
-      '<div class="hl-surface-muted">Loading...</div>',
-      true
-    );
-    Promise.all([
-      agentApiJson('api/hermes-layer/headroom'),
-      agentApiJson('api/hermes-layer/headroom/stats')
-    ]).then(function(results){
-      renderOptimizationSurface(results[0].headroom, results[1].stats, false);
-    }).catch(function(error){
-      surfaceShell(
-        'Context Optimization',
-        'Headroom runs inside this isolated workspace and reports redacted aggregate metrics.',
-        '<div class="hl-surface-alert">' + escapeHtml(error.message || 'Context optimization failed.') + '</div>',
-        false
-      );
-    });
-  }
-
   function openBackupsSurface(){
     surfaceShell(
       'Backups',
-      'Full workspace backups include Hermes/WebUI data, Headroom data, manifest and checksums.',
+      'Full workspace backups include Hermes/WebUI data, manifest and checksums.',
       '<div class="hl-surface-muted">Loading...</div>',
       true
     );
@@ -306,7 +284,7 @@
     }).catch(function(error){
       surfaceShell(
         'Backups',
-        'Full workspace backups include Hermes/WebUI data, Headroom data, manifest and checksums.',
+        'Full workspace backups include Hermes/WebUI data, manifest and checksums.',
         '<div class="hl-surface-alert">' + escapeHtml(error.message || 'Backups failed.') + '</div>',
         false
       );
@@ -420,7 +398,7 @@
     }).join('');
     var body =
       '<div class="hl-surface-row">' +
-        '<div><h3>Full Workspace Backup</h3><p>Archives restore Hermes/WebUI data and Headroom context data together after checksum verification. Exports can be imported back into this workspace.</p></div>' +
+        '<div><h3>Full Workspace Backup</h3><p>Archives restore Hermes/WebUI data after checksum verification. Exports can be imported back into this workspace.</p></div>' +
         '<div class="hl-surface-actions">' +
           '<button class="hl-surface-button" type="button" data-hl-import-backup-button ' + (busy ? 'disabled' : '') + '>Import backup</button>' +
           '<button class="hl-surface-button is-primary" type="button" data-hl-create-backup ' + (busy ? 'disabled' : '') + '>Create backup</button>' +
@@ -437,7 +415,7 @@
       '<div class="hl-backup-list">' + (rows || '<div class="hl-surface-muted">No backups yet.</div>') + '</div>';
     var root = surfaceShell(
       'Backups',
-      'Full workspace backups include Hermes/WebUI data, Headroom data, manifest and checksums.',
+      'Full workspace backups include Hermes/WebUI data, manifest and checksums.',
       body,
       busy
     );
@@ -503,80 +481,6 @@
         });
       });
     });
-  }
-
-  function renderOptimizationSurface(state, stats, saving){
-    var runtime = state && state.runtime ? state.runtime : {};
-    var settings = state && state.settings ? state.settings : {};
-    var summary = stats && stats.summary ? stats.summary : {};
-    var enabled = settings.enabled !== false;
-    var history = stats && stats.history ? stats.history : null;
-    var lifetime = history && history.lifetime ? history.lifetime : {};
-    var currentSession = history && history.currentSession ? history.currentSession : {};
-    var periods = history && Array.isArray(history.periods) ? history.periods : [];
-    var periodRows = periods.slice(0, 14).map(function(period){
-      return '<tr>' +
-        '<td>' + escapeHtml(period.date || '-') + '</td>' +
-        '<td>' + escapeHtml(formatNumber(period.requests)) + '</td>' +
-        '<td>' + escapeHtml(formatNumber(period.tokensSaved)) + '</td>' +
-        '<td>' + escapeHtml(formatPercent(period.savingsPercent)) + '</td>' +
-      '</tr>';
-    }).join('');
-    var body =
-      '<div class="hl-surface-row">' +
-        '<div><h3>Context optimization</h3><p>Uses Headroom inside this hosted agent to reduce context size before model calls.</p></div>' +
-        '<label class="hl-switch"><input type="checkbox" data-hl-headroom-toggle ' + (enabled ? 'checked' : '') + ' ' + (saving ? 'disabled' : '') + '><span></span><b>' + (enabled ? 'Enabled' : 'Disabled') + '</b></label>' +
-      '</div>' +
-      '<div class="hl-surface-status-grid">' +
-        statusItem('Optimization', runtime.status || 'unknown', ['healthy', 'disabled'].indexOf(runtime.status || '') >= 0) +
-        statusItem('Optimizer service', runtime.sidecarHealthy ? 'healthy' : 'unhealthy', !!runtime.sidecarHealthy) +
-        statusItem('Context engine', runtime.pluginConfigured ? 'configured' : 'missing', !!runtime.pluginConfigured) +
-        statusItem('Tool bridge', runtime.mcpConfigured ? 'configured' : 'missing', !!runtime.mcpConfigured) +
-      '</div>' +
-      (runtime.message ? '<div class="hl-surface-alert">' + escapeHtml(runtime.message) + '</div>' : '') +
-      '<div class="hl-surface-metrics">' +
-        metric('Requests', formatNumber(summary.requests)) +
-        metric('Compressed', formatNumber(summary.requestsCompressed)) +
-        metric('Tokens saved', formatNumber(summary.tokensSaved)) +
-        metric('Savings', formatPercent(summary.savingsPercent)) +
-        metric('Tokens before', formatNumber(summary.tokensBefore)) +
-        metric('Tokens after', formatNumber(summary.tokensAfter)) +
-        metric('Cache hits', formatNumber(summary.cacheHits)) +
-        metric('CCR entries', formatNumber(summary.ccrEntries)) +
-      '</div>' +
-      (history ? '<h3>History</h3>' +
-        '<div class="hl-surface-metrics">' +
-          metric('Lifetime requests', formatNumber(lifetime.requests)) +
-          metric('Lifetime saved', formatNumber(lifetime.tokensSaved)) +
-          metric('Session saved', formatNumber(currentSession.tokensSaved)) +
-          metric('Generated', history.generatedAt || '-') +
-        '</div>' +
-        (periodRows ? '<table class="hl-surface-table"><thead><tr><th>Date</th><th>Requests</th><th>Tokens saved</th><th>Savings</th></tr></thead><tbody>' + periodRows + '</tbody></table>' : '<div class="hl-surface-muted">No history periods yet.</div>') : '');
-    var root = surfaceShell(
-      'Context Optimization',
-      'Headroom runs inside this isolated workspace and reports redacted aggregate metrics.',
-      body,
-      saving
-    );
-    var toggle = root.querySelector('[data-hl-headroom-toggle]');
-    if (toggle) {
-      toggle.addEventListener('change', function(event){
-        var next = !!event.target.checked;
-        renderOptimizationSurface(state, stats, true);
-        agentApiJson('api/hermes-layer/headroom', {
-          method: 'PATCH',
-          body: JSON.stringify({ enabled: next })
-        }).then(function(result){
-          return agentApiJson('api/hermes-layer/headroom/stats').then(function(statsResult){
-            renderOptimizationSurface(result.headroom, statsResult.stats, false);
-          });
-        }).catch(function(error){
-          renderOptimizationSurface(state, stats, false);
-          var bodyNode = document.querySelector('.hl-surface-body');
-          if (bodyNode) bodyNode.insertAdjacentHTML('afterbegin', '<div class="hl-surface-alert">' + escapeHtml(error.message || 'Context optimization update failed.') + '</div>');
-        });
-      });
-    }
   }
 
   function setOpen(root, open){
@@ -693,7 +597,6 @@
         event.preventDefault();
         setOpen(root, false);
         if (action.getAttribute('data-hl-action') === 'workspace') openWorkspaceSurface();
-        if (action.getAttribute('data-hl-action') === 'optimization') openOptimizationSurface();
         if (action.getAttribute('data-hl-action') === 'backups') openBackupsSurface();
       });
     });

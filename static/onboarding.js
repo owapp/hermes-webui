@@ -428,12 +428,10 @@ function _providerStatusLabel(system){
 function _renderHostedFinishCards(){
   if(!_isHostedOnboarding())return '';
   const system=(ONBOARDING.status||{}).system||{};
-  const hosted=(ONBOARDING.status||{}).hosted||{};
   const hermesOk=system.hermes_found&&system.imports_ok;
   return `
     <div class="onboarding-panel-grid onboarding-hosted-summary">
       <div class="onboarding-check ${hermesOk?'ok':'warn'}"><strong>Hermes Agent</strong><span>${hermesOk?'Ready':'Starting'}</span></div>
-      <div class="onboarding-check ${hosted.headroom?'ok':'muted'}"><strong>Context optimization</strong><span>${hosted.headroom?'Headroom active':'Not enabled'}</span></div>
     </div>`;
 }
 

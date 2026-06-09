@@ -58,7 +58,7 @@ def test_standalone_hosted_controls_are_removed_from_markup():
         assert f'id="{element_id}"' not in HTML, f"{element_id} must not be visible in hosted WebUI"
 
 
-def test_hermes_layer_bridge_owns_workspace_backups_and_headroom_routes():
+def test_hermes_layer_bridge_owns_workspace_and_backup_routes_without_headroom_surface():
     required_routes = [
         "api/hermes-layer/session",
         "api/hermes-layer/workspace",
@@ -67,13 +67,12 @@ def test_hermes_layer_bridge_owns_workspace_backups_and_headroom_routes():
         "api/hermes-layer/backups",
         "api/hermes-layer/backups/import",
         "api/hermes-layer/restore",
-        "api/hermes-layer/headroom",
-        "api/hermes-layer/headroom/stats",
     ]
     for route in required_routes:
         assert route in HERMES_LAYER_JS
+    assert "api/hermes-layer/headroom" not in HERMES_LAYER_JS
 
-    required_actions = ["workspace", "optimization", "backups"]
+    required_actions = ["workspace", "backups"]
     assert "data-hl-action" in HERMES_LAYER_JS
     assert "data-hl-account-logout" in HERMES_LAYER_JS
     assert "data-hl-workspace-action" in HERMES_LAYER_JS
@@ -129,12 +128,12 @@ def test_hosted_first_run_blocks_interaction_until_onboarding_status_resolves():
 
 def test_hosted_layer_surfaces_use_agent_language_not_infra_labels():
     assert "Control your hosted Hermes Agent through Hermes Layer." in HERMES_LAYER_JS
-    assert "Archives restore Hermes/WebUI data and Headroom context data together" in HERMES_LAYER_JS
+    assert "Archives restore Hermes/WebUI data after checksum verification" in HERMES_LAYER_JS
     assert "Agent service" in HERMES_LAYER_JS
     assert "Current agent data will be replaced." in HERMES_LAYER_JS
-    assert "Optimizer service" in HERMES_LAYER_JS
-    assert "Context engine" in HERMES_LAYER_JS
-    assert "Tool bridge" in HERMES_LAYER_JS
+    assert "Optimizer service" not in HERMES_LAYER_JS
+    assert "Context engine" not in HERMES_LAYER_JS
+    assert "Tool bridge" not in HERMES_LAYER_JS
     assert "Control your hosted Hermes Agent runtime" not in HERMES_LAYER_JS
     assert "Current runtime data will be replaced." not in HERMES_LAYER_JS
     assert "Hermes/WebUI volume" not in HERMES_LAYER_JS
@@ -164,13 +163,12 @@ def test_hosted_bridge_does_not_integrate_webui_through_iframe_or_proxy_dom_patc
     assert "mutationobserver" not in lowered
 
 
-def test_headroom_history_is_rendered_as_redacted_metrics_not_raw_json():
-    assert "JSON.stringify(stats.history" not in HERMES_LAYER_JS
-    assert "hl-surface-table" in HERMES_LAYER_JS
-    assert "Lifetime saved" in HERMES_LAYER_JS
-    assert "Session saved" in HERMES_LAYER_JS
+def test_headroom_context_optimization_panel_is_not_user_facing():
+    assert "Context Optimization" not in HERMES_LAYER_JS
+    assert "data-hl-headroom-toggle" not in HERMES_LAYER_JS
+    assert "openOptimizationSurface" not in HERMES_LAYER_JS
+    assert "renderOptimizationSurface" not in HERMES_LAYER_JS
     assert "storage_path" not in HERMES_LAYER_JS
-    assert ".hl-surface-table" in (STATIC / "style.css").read_text(encoding="utf-8")
 
 
 def test_bridge_rebases_fetch_and_eventsource_to_the_agent_gateway():

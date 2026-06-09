@@ -962,7 +962,6 @@ def get_onboarding_status() -> dict:
         "hosted": {
             "enabled": hosted_onboarding,
             "managed_auth": hosted_onboarding,
-            "headroom": bool(os.environ.get("HERMES_LAYER_HEADROOM_BASE_URL", "").strip()),
         },
         "settings": {
             "default_model": settings.get("default_model") or DEFAULT_MODEL,
