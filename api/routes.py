@@ -1639,11 +1639,11 @@ def _onboarding_gate_allows(handler) -> bool:
     return _onboarding_request_is_local(handler)
 
 
-def _hosted_managed_onboarding_setup_allows(body: dict | None) -> bool:
+def _hosted_onboarding_setup_allows(body: dict | None) -> bool:
     if not _truthy_env("HERMES_LAYER_HOSTED_ONBOARDING"):
         return False
     provider = str((body or {}).get("provider") or "").strip().lower()
-    return provider == "hermes-layer-managed"
+    return provider in _SUPPORTED_PROVIDER_SETUPS
 
 
 def _hosted_onboarding_completion_allows() -> bool:
@@ -3425,6 +3425,7 @@ from api.run_journal import (
 from api.todo_state import attach_todo_state
 from api.providers import get_providers, get_provider_quota, get_provider_cost_history, set_provider_key, remove_provider_key
 from api.onboarding import (
+    _SUPPORTED_PROVIDER_SETUPS,
     apply_onboarding_setup,
     get_onboarding_status,
     complete_onboarding,
@@ -7929,7 +7930,7 @@ def handle_post(handler, parsed) -> bool:
         # carries the real origin IP — read it first before falling back to the raw socket addr.
         # HERMES_WEBUI_ONBOARDING_OPEN=1 lets operators on remote servers explicitly bypass
         # the check when they control network access themselves (e.g. firewall + VPN).
-        if not _onboarding_gate_allows(handler) and not _hosted_managed_onboarding_setup_allows(body):
+        if not _onboarding_gate_allows(handler) and not _hosted_onboarding_setup_allows(body):
             return bad(handler, "Onboarding setup is only available from local networks when auth is not enabled. To bypass this on a remote server, set HERMES_WEBUI_ONBOARDING_OPEN=1.", 403)
         try:
             return j(handler, apply_onboarding_setup(body))
