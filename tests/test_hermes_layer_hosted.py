@@ -181,8 +181,10 @@ def test_hosted_mode_uses_hermes_layer_favicons():
     favicon_svg = (STATIC / "favicon.svg").read_text(encoding="utf-8")
     favicon_512_svg = (STATIC / "favicon-512.svg").read_text(encoding="utf-8")
     assert 'viewBox="0 0 330 330"' in favicon_svg
-    assert "#00C5EF" in favicon_svg
-    assert "#5843E5" in favicon_svg
+    assert "#FFD700" in favicon_svg
+    assert "#9E7600" in favicon_svg
+    assert "#00C5EF" not in favicon_svg
+    assert "#5843E5" not in favicon_svg
     assert "#F5C542" not in favicon_svg
     assert "#D4961C" not in favicon_svg
     assert favicon_512_svg == favicon_svg
