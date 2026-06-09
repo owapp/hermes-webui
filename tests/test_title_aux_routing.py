@@ -460,7 +460,7 @@ class TestReasoningModelTitleGeneration(unittest.TestCase):
     def test_aux_still_retries_finish_length_without_reasoning(self):
         """Length-truncated responses WITHOUT reasoning tokens still get the
         budget-doubling retry — those are legitimately recoverable by giving
-        the model more headroom."""
+        the model more context margin."""
         from api.streaming import generate_title_raw_via_aux
 
         responses = [

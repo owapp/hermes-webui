@@ -2007,7 +2007,7 @@ def _title_retry_completion_budget(provider: str = '', model: str = '', base_url
 def _title_retry_status(status: str) -> bool:
     # Whether to grant a second budget attempt within the same prompt+model
     # combination.  ``llm_length`` indicates the model would have produced
-    # content with more headroom, so doubling the budget can help.
+    # content with more context margin, so doubling the budget can help.
     #
     # ``llm_empty_reasoning`` historically also triggered a retry, but for
     # reasoning models (Qwen3-thinking, DeepSeek-R1, Kimi-K2, etc.) that

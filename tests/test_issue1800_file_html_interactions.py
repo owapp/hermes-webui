@@ -82,7 +82,7 @@ def test_media_html_inline_keeps_csp_sandbox():
     # active-workspace carve-out + safety gate earlier in _handle_media, pushing
     # the CSP block to ~12100 chars past the def. (Originally widened 4000→5000
     # for PR #2044's MEDIA_ALLOWED_ROOTS parsing.) The assertion is structural,
-    # not positional — generous headroom avoids re-breaking on small future edits.
+    # not positional — generous margin avoids re-breaking on small future edits.
     body = _slice_after(ROUTES_PY, "def _handle_media", 16000)
     assert 'html_inline_ok = inline_preview and mime == "text/html"' in body
     assert 'csp = "sandbox allow-scripts" if html_inline_ok else None' in body

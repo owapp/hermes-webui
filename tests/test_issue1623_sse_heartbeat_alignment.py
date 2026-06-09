@@ -20,7 +20,7 @@ REPO = Path(__file__).parent.parent
 
 def test_sse_heartbeat_constant_below_kernel_keepalive_window():
     """The named constant exists and is at most half the kernel keepalive
-    timeout (10 + 5*3 = 25s). 5s gives the kernel ~5x headroom."""
+    timeout (10 + 5*3 = 25s). 5s gives the kernel ~5x timing margin."""
     src = (REPO / "api" / "routes.py").read_text(encoding="utf-8")
 
     # The constant must be defined.

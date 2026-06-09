@@ -255,7 +255,7 @@ Hermes Web UI exposes two health levels:
 At startup the server also tries to raise its file-descriptor soft limit to
 4096 on platforms that support ``RLIMIT_NOFILE``. That is defense in depth for
 persistent hosts: leaks should still be fixed, but a higher soft limit gives
-you more diagnostic headroom before request handling falls over.
+you more diagnostic buffer before request handling falls over.
 
 Minimal macOS launchd watchdog script:
 

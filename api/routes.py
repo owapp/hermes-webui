@@ -583,7 +583,7 @@ def _skill_view_from_active_dir(name: str) -> dict:
 # KEEPIDLE (10s) + KEEPINTVL (5s) * KEEPCNT (3) = 25s in the worst case. The
 # app-level SSE heartbeat must fire well below that window so flaky-network
 # probes never get the chance to kill an idle stream during long LLM thinking
-# phases. 5s gives the kernel ~5x headroom: probe at 10s, heartbeat byte at
+# phases. 5s gives the kernel ~5x timing margin: probe at 10s, heartbeat byte at
 # every 5s of idle keeps the socket warm.
 #
 # Cost: ~12 bytes per heartbeat * 12 extra heartbeats/min = ~150B/min idle.

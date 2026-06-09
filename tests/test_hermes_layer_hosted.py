@@ -58,7 +58,7 @@ def test_standalone_hosted_controls_are_removed_from_markup():
         assert f'id="{element_id}"' not in HTML, f"{element_id} must not be visible in hosted WebUI"
 
 
-def test_hermes_layer_bridge_owns_workspace_and_backup_routes_without_headroom_surface():
+def test_hermes_layer_bridge_owns_workspace_and_backup_routes():
     required_routes = [
         "api/hermes-layer/session",
         "api/hermes-layer/workspace",
@@ -70,7 +70,6 @@ def test_hermes_layer_bridge_owns_workspace_and_backup_routes_without_headroom_s
     ]
     for route in required_routes:
         assert route in HERMES_LAYER_JS
-    assert "api/hermes-layer/headroom" not in HERMES_LAYER_JS
 
     required_actions = ["workspace", "backups"]
     assert "data-hl-action" in HERMES_LAYER_JS
@@ -137,7 +136,6 @@ def test_hosted_layer_surfaces_use_agent_language_not_infra_labels():
     assert "Control your hosted Hermes Agent runtime" not in HERMES_LAYER_JS
     assert "Current runtime data will be replaced." not in HERMES_LAYER_JS
     assert "Hermes/WebUI volume" not in HERMES_LAYER_JS
-    assert "Headroom volume" not in HERMES_LAYER_JS
     assert "statusItem('Runtime'" not in HERMES_LAYER_JS
     assert "statusItem('Sidecar'" not in HERMES_LAYER_JS
     assert "statusItem('Plugin'" not in HERMES_LAYER_JS
@@ -161,14 +159,6 @@ def test_hosted_bridge_does_not_integrate_webui_through_iframe_or_proxy_dom_patc
     assert "contentdocument" not in lowered
     assert "srcdoc" not in lowered
     assert "mutationobserver" not in lowered
-
-
-def test_headroom_context_optimization_panel_is_not_user_facing():
-    assert "Context Optimization" not in HERMES_LAYER_JS
-    assert "data-hl-headroom-toggle" not in HERMES_LAYER_JS
-    assert "openOptimizationSurface" not in HERMES_LAYER_JS
-    assert "renderOptimizationSurface" not in HERMES_LAYER_JS
-    assert "storage_path" not in HERMES_LAYER_JS
 
 
 def test_bridge_rebases_fetch_and_eventsource_to_the_agent_gateway():

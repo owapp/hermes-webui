@@ -208,7 +208,7 @@ def session_usage(session_id: str) -> dict[str, Any]:
     """Return token usage and cost for /usage.
 
     Mirrors gateway/run.py:_handle_usage_command's basic counters. The
-    agent shows additional fields (rate-limit headroom etc.) that depend
+    agent shows additional fields (rate-limit margin etc.) that depend
     on provider API responses we don't have in webui -- those are deferred.
     """
     s = get_session(session_id)

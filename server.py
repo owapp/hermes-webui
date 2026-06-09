@@ -441,7 +441,7 @@ def _raise_fd_soft_limit(target: int = 4096) -> dict:
 
     macOS launchd jobs often start with a 256 soft limit. If a future FD leak
     regresses, that low ceiling turns a leak into a hard HTTP wedge quickly.
-    Raising the soft limit does not hide leaks; it buys enough headroom for
+    Raising the soft limit does not hide leaks; it buys enough buffer for
     diagnostics and watchdog recovery.
     """
     if resource is None:
