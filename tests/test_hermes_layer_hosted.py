@@ -110,6 +110,14 @@ def test_account_menu_is_avatar_based_not_a_brand_overlay_button():
     assert ".hl-account-loading" in STYLE_CSS
 
 
+def test_desktop_account_avatar_stays_right_aligned():
+    assert "@media(min-width:641px)" in STYLE_CSS
+    assert ".app-titlebar .hl-account{position:absolute;right:max(12px,env(safe-area-inset-right,0px));" in STYLE_CSS
+    assert ".pwa-standalone .app-titlebar .hl-account{right:max(50px,calc(env(safe-area-inset-right,0px) + 50px));}" in STYLE_CSS
+    assert "@media(max-width:640px)" in STYLE_CSS
+    assert ".app-titlebar{justify-content:space-between;}" in STYLE_CSS
+
+
 def test_hosted_first_run_blocks_interaction_until_onboarding_status_resolves():
     assert 'id="hermes-layer-boot-blocker"' in HTML
     assert ".hl-hosted-boot-blocker" in STYLE_CSS
