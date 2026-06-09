@@ -9,6 +9,7 @@ Covers:
 - /manifest.json, /manifest.webmanifest, /sw.js routes serve correct Content-Type
 """
 import json
+from urllib.parse import urlparse
 import re
 from pathlib import Path
 
@@ -47,7 +48,7 @@ class TestManifest:
                 continue  # external icon, skip
             # Paths are relative to the app root (where manifest is served)
             # 'static/favicon.svg' or './static/favicon.svg' both valid
-            clean = src.lstrip("./")
+            clean = urlparse(src).path.lstrip("./")
             p = ROOT / clean
             assert p.exists(), f"manifest.json references missing icon: {src}"
 
