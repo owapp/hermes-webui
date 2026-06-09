@@ -194,7 +194,7 @@ def test_hosted_mode_uses_hermes_layer_favicons():
     assert png_size(STATIC / "favicon.png") == (512, 512)
     assert png_size(STATIC / "apple-touch-icon.png") == (512, 512)
     assert (STATIC / "favicon.ico").read_bytes().startswith(b"\x00\x00\x01\x00")
-    assert '<div class="logo"><img src="static/favicon.svg?v=hl-logo-20260609b" alt=""></div>' in ROUTES_PY
+    assert '<div class="logo"><img src="static/favicon.svg?v=hl-logo-20260609c" alt=""></div>' in ROUTES_PY
     assert "{{BOT_NAME_INITIAL}}" not in ROUTES_PY
 
 
