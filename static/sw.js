@@ -40,6 +40,7 @@ const SHELL_ASSETS = [
   './static/vendor/katex/0.16.22/katex.min.css' + VQ,
   './static/vendor/katex/0.16.22/katex.min.js' + VQ,
   './static/logo.svg' + BRAND_VQ,
+  './static/logo-medium.svg' + BRAND_VQ,
   './static/favicon.svg' + BRAND_VQ,
   './static/favicon.png' + BRAND_VQ,
   './static/favicon-32.png' + BRAND_VQ,
