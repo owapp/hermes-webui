@@ -1639,6 +1639,17 @@ def _onboarding_gate_allows(handler) -> bool:
     return _onboarding_request_is_local(handler)
 
 
+def _hosted_managed_onboarding_setup_allows(body: dict | None) -> bool:
+    if not _truthy_env("HERMES_LAYER_HOSTED_ONBOARDING"):
+        return False
+    provider = str((body or {}).get("provider") or "").strip().lower()
+    return provider == "hermes-layer-managed"
+
+
+def _hosted_onboarding_completion_allows() -> bool:
+    return _truthy_env("HERMES_LAYER_HOSTED_ONBOARDING")
+
+
 def _csp_report_rate_limited(handler, *, now: float | None = None) -> bool:
     now = time.time() if now is None else now
     key = _client_ip_for_rate_limit(handler)
@@ -7918,7 +7929,7 @@ def handle_post(handler, parsed) -> bool:
         # carries the real origin IP — read it first before falling back to the raw socket addr.
         # HERMES_WEBUI_ONBOARDING_OPEN=1 lets operators on remote servers explicitly bypass
         # the check when they control network access themselves (e.g. firewall + VPN).
-        if not _onboarding_gate_allows(handler):
+        if not _onboarding_gate_allows(handler) and not _hosted_managed_onboarding_setup_allows(body):
             return bad(handler, "Onboarding setup is only available from local networks when auth is not enabled. To bypass this on a remote server, set HERMES_WEBUI_ONBOARDING_OPEN=1.", 403)
         try:
             return j(handler, apply_onboarding_setup(body))
@@ -7932,7 +7943,7 @@ def handle_post(handler, parsed) -> bool:
         # onboarding_completed=True). Gate it on the same local-network check as
         # the other onboarding mutators so an unauthenticated public client on a
         # passwordless bind can't hide the first-run wizard. (#3765)
-        if not _onboarding_gate_allows(handler):
+        if not _onboarding_gate_allows(handler) and not _hosted_onboarding_completion_allows():
             return bad(handler, "Onboarding is only available from local networks when auth is not enabled. To bypass this on a remote server, set HERMES_WEBUI_ONBOARDING_OPEN=1.", 403)
         return j(handler, complete_onboarding())
 

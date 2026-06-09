@@ -632,7 +632,7 @@ function _renderOnboardingBody(){
         ? ''
         : `<div><strong>${t('onboarding_workspace_label')}</strong><span>${esc(ONBOARDING.form.workspace||t('onboarding_not_set'))}</span></div><div><strong>${t('onboarding_check_password')}</strong><span>${t(_getOnboardingPasswordSummaryKey(settings))}</span></div>`}
     </div>
-    ${ONBOARDING.form.baseUrl?`<p class="onboarding-copy"><strong>${t('onboarding_base_url_label')}</strong> ${esc(ONBOARDING.form.baseUrl)}</p>`:''}
+    ${(!_isHostedOnboarding()&&ONBOARDING.form.baseUrl)?`<p class="onboarding-copy"><strong>${t('onboarding_base_url_label')}</strong> ${esc(ONBOARDING.form.baseUrl)}</p>`:''}
     <p class="onboarding-copy">${_isHostedOnboarding()?'Your agent opens with the selected provider and model. You can change provider settings later from WebUI preferences.':t('onboarding_finish_help')}</p>`;
 }
 

@@ -18,6 +18,7 @@ STYLE_CSS = (STATIC / "style.css").read_text(encoding="utf-8")
 BOOT_JS = (STATIC / "boot.js").read_text(encoding="utf-8")
 PANELS_JS = (STATIC / "panels.js").read_text(encoding="utf-8")
 UI_JS = (STATIC / "ui.js").read_text(encoding="utf-8")
+ROUTES_PY = (REPO / "api" / "routes.py").read_text(encoding="utf-8")
 
 
 def png_size(path: Path) -> tuple[int, int]:
@@ -244,3 +245,19 @@ def test_dashboard_and_host_editor_surfaces_are_hosted_guarded():
         guard_pos = UI_JS.rfind("if(!window.__hermesLayerHosted)", 0, route_pos)
         assert guard_pos != -1
         assert route_pos - guard_pos < 900, f"{route} must stay behind a hosted guard"
+
+
+def test_hosted_onboarding_only_allows_managed_setup_and_completion():
+    assert "def _hosted_managed_onboarding_setup_allows" in ROUTES_PY
+    assert 'provider == "hermes-layer-managed"' in ROUTES_PY
+    assert "not _onboarding_gate_allows(handler) and not _hosted_managed_onboarding_setup_allows(body)" in ROUTES_PY
+    assert "def _hosted_onboarding_completion_allows" in ROUTES_PY
+    assert "not _onboarding_gate_allows(handler) and not _hosted_onboarding_completion_allows()" in ROUTES_PY
+
+    oauth_start = ROUTES_PY[ROUTES_PY.index('if parsed.path == "/api/onboarding/oauth/start"') : ROUTES_PY.index('if parsed.path == "/api/onboarding/oauth/cancel"')]
+    assert "_hosted_managed_onboarding_setup_allows" not in oauth_start
+    assert "_hosted_onboarding_completion_allows" not in oauth_start
+
+
+def test_hosted_onboarding_does_not_show_internal_managed_ai_base_url():
+    assert "!_isHostedOnboarding()&&ONBOARDING.form.baseUrl" in (STATIC / "onboarding.js").read_text(encoding="utf-8")
