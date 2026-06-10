@@ -6484,8 +6484,8 @@ async function loadSettingsPanel(){
     _applyTabVisibility(hiddenTabs);
     _renderTabVisibilityChips();
     const resolvedLanguage=(typeof resolvePreferredLocale==='function')
-      ? resolvePreferredLocale(settings.language, localStorage.getItem('hermes-lang'))
-      : (settings.language || localStorage.getItem('hermes-lang') || 'en');
+      ? resolvePreferredLocale(settings.language, localStorage.getItem('hermes-lang'), typeof browserLocaleCandidates==='function'?browserLocaleCandidates():[])
+      : (settings.language || localStorage.getItem('hermes-lang') || (navigator.language || 'en'));
     // Keep settings modal and current page strings in sync with the resolved locale.
     if(typeof setLocale==='function'){
       setLocale(resolvedLanguage);

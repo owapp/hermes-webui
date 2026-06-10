@@ -16604,16 +16604,37 @@ function resolveLocale(lang) {
 }
 
 /**
+ * Browser locale candidates in preference order.
+ * navigator.languages preserves the user's full browser language priority list;
+ * navigator.language is kept as a fallback for older browsers.
+ * @returns {string[]}
+ */
+function browserLocaleCandidates() {
+  const candidates = [];
+  try {
+    if (Array.isArray(navigator.languages)) candidates.push(...navigator.languages);
+    if (navigator.language) candidates.push(navigator.language);
+  } catch (_) {}
+  return candidates.filter(Boolean);
+}
+
+/**
  * Resolve locale with precedence:
  * 1) primary (typically server setting)
- * 2) fallback (typically localStorage)
+ * 2) fallbacks in order (typically localStorage, then browser language)
  * 3) English
  * @param {string} primary
- * @param {string} fallback
+ * @param {...(string|string[])} fallbacks
  * @returns {string}
  */
-function resolvePreferredLocale(primary, fallback) {
-  return resolveLocale(primary) || resolveLocale(fallback) || 'en';
+function resolvePreferredLocale(primary, ...fallbacks) {
+  const resolvedPrimary = resolveLocale(primary);
+  if (resolvedPrimary) return resolvedPrimary;
+  for (const fallback of fallbacks.flat()) {
+    const resolved = resolveLocale(fallback);
+    if (resolved) return resolved;
+  }
+  return 'en';
 }
 
 /**
@@ -16655,7 +16676,7 @@ function setLocale(lang) {
 function loadLocale() {
   let stored = null;
   try { stored = localStorage.getItem('hermes-lang'); } catch (_) {}
-  setLocale(resolvePreferredLocale(null, stored));
+  setLocale(resolvePreferredLocale(null, stored, browserLocaleCandidates()));
 }
 
 /**

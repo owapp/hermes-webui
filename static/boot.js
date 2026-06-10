@@ -1799,8 +1799,8 @@ function applyBotName(){
     _applyFontSize(fontSize);
     if(typeof setLocale==='function'){
       const _lang=typeof resolvePreferredLocale==='function'
-        ? resolvePreferredLocale(s.language, localStorage.getItem('hermes-lang'))
-        : (s.language || localStorage.getItem('hermes-lang') || 'en');
+        ? resolvePreferredLocale(s.language, localStorage.getItem('hermes-lang'), typeof browserLocaleCandidates==='function'?browserLocaleCandidates():[])
+        : (s.language || localStorage.getItem('hermes-lang') || (navigator.language || 'en'));
       setLocale(_lang);
       if(typeof applyLocaleToDOM==='function')applyLocaleToDOM();
     }
@@ -1830,8 +1830,8 @@ function applyBotName(){
     _bootSettings={check_for_updates:false};
     if(typeof setLocale==='function'){
       const _lang=typeof resolvePreferredLocale==='function'
-        ? resolvePreferredLocale(null, localStorage.getItem('hermes-lang'))
-        : (localStorage.getItem('hermes-lang') || 'en');
+        ? resolvePreferredLocale(null, localStorage.getItem('hermes-lang'), typeof browserLocaleCandidates==='function'?browserLocaleCandidates():[])
+        : (localStorage.getItem('hermes-lang') || (navigator.language || 'en'));
       setLocale(_lang);
       if(typeof applyLocaleToDOM==='function')applyLocaleToDOM();
     }
