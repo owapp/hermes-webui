@@ -431,7 +431,7 @@ function _renderHostedFinishCards(){
   const hermesOk=system.hermes_found&&system.imports_ok;
   return `
     <div class="onboarding-panel-grid onboarding-hosted-summary">
-      <div class="onboarding-check ${hermesOk?'ok':'warn'}"><strong>Hermes Agent</strong><span>${hermesOk?'Ready':'Starting'}</span></div>
+      <div class="onboarding-check"><strong>Hermes Agent</strong><span>${hermesOk?'Ready':'Starting'}</span></div>
     </div>`;
 }
 
