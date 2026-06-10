@@ -1328,6 +1328,8 @@
   .onboarding-check span{font-size:12px;color:var(--muted);line-height:1.5;}
   .onboarding-check.ok{border-color:var(--accent-bg);background:var(--accent-bg);}
   .onboarding-check.warn{border-color:var(--accent-bg-strong);background:var(--accent-bg);}
+  .onboarding-hosted-summary .onboarding-check.ok,
+  .onboarding-hosted-summary .onboarding-check.warn{border-color:var(--border);background:rgba(255,255,255,.03);}
   .onboarding-mode-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;}
   .onboarding-mode-card{appearance:none;text-align:left;padding:14px;border-radius:14px;border:1px solid var(--border);background:rgba(255,255,255,.03);color:var(--text);cursor:pointer;display:flex;flex-direction:column;gap:8px;}
   .onboarding-mode-card:hover{border-color:var(--accent-bg-strong);}
