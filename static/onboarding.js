@@ -74,11 +74,11 @@ function _configureOnboardingMode(){
   const lead=$('onboardingLead');
   const skip=$('onboardingSkipBtn');
   if(hosted){
-    if(badge)badge.textContent='HOSTED SETUP';
-    if(title)title.textContent='Configure your hosted Hermes Agent';
-    if(lead)lead.textContent='Connect a provider, choose the model and open your first hosted Hermes workspace.';
+    if(badge)badge.textContent=t('hl_hosted_setup');
+    if(title)title.textContent=t('hl_configure_hosted_agent');
+    if(lead)lead.textContent=t('hl_hosted_onboarding_intro');
     if(skip){
-      skip.textContent=_hostedOnboardingReady()?'Finish later':'Provider required';
+      skip.textContent=_hostedOnboardingReady()?t('hl_finish_later'):t('hl_provider_required');
       skip.disabled=!_hostedOnboardingReady();
       skip.style.opacity=_hostedOnboardingReady()?'.72':'.38';
     }
@@ -228,9 +228,9 @@ function _getOnboardingCurrentSetup(){
 function _onboardingStepMeta(key){
   if(_isHostedOnboarding()){
     return ({
-      setup:{title:'Provider setup',desc:'Connect the model provider for this agent.'},
-      workspace:{title:'Model',desc:'Choose the default model for new chats.'},
-      finish:{title:'Start',desc:'Review and open your agent.'}
+      setup:{title:t('hl_step_provider_setup'),desc:t('hl_step_provider_desc')},
+      workspace:{title:t('hl_step_model'),desc:t('hl_step_model_desc')},
+      finish:{title:t('hl_step_start'),desc:t('hl_step_start_desc')}
     })[key];
   }
   return ({
@@ -337,12 +337,12 @@ function _renderHostedProviderModeCards(){
   const managed=ONBOARDING.form.configMode==='managed';
   return `<div class="onboarding-mode-grid">
     <button type="button" class="onboarding-mode-card ${managed?'active':''}" onclick="syncHostedConfigMode('managed')">
-      <strong>Managed AI credits <span>Recommended</span></strong>
-      <small>No provider account required. Usage is debited from your prepaid EUR balance.</small>
+      <strong>${t('hl_managed_ai_credits')} <span>${t('hl_recommended')}</span></strong>
+      <small>${t('hl_managed_ai_no_provider')}</small>
     </button>
     <button type="button" class="onboarding-mode-card ${!managed?'active':''}" onclick="syncHostedConfigMode('byok')">
-      <strong>Bring your own key</strong>
-      <small>Use OpenAI, Anthropic, OpenRouter, self-hosted endpoints or other WebUI providers.</small>
+      <strong>${t('hl_byok')}</strong>
+      <small>${t('hl_byok_desc')}</small>
     </button>
   </div>`;
 }
@@ -359,20 +359,20 @@ function _renderManagedCreditsSetup(){
   const amount=ONBOARDING.form.aiTopUpAmount||((min/100).toFixed(2));
   const defaultModel=config.defaultModel||'openrouter/auto';
   if(!ONBOARDING.form.model)ONBOARDING.form.model=defaultModel;
-  const status=loading?'Loading credits...':error?error:(ready?'Managed AI credits are ready.':'Add prepaid credits before continuing.');
+  const status=loading?t('hl_loading_credits'):error?error:(ready?t('hl_managed_ai_ready'):t('hl_add_prepaid_before_continue'));
   return `<div class="onboarding-managed-ai">
     <div class="onboarding-check ${ready?'ok':'warn'}">
-      <strong>AI credits</strong>
+      <strong>${t('hl_ai_credits')}</strong>
       <span>${esc(status)}</span>
     </div>
     <div class="onboarding-summary">
-      <div><strong>Available</strong><span>${esc(_formatManagedCredits(available))}</span></div>
-      <div><strong>Minimum top-up</strong><span>${esc(_formatManagedCredits(min))}</span></div>
-      <div><strong>Maximum top-up</strong><span>${esc(_formatManagedCredits(max))}</span></div>
+      <div><strong>${t('hl_available')}</strong><span>${esc(_formatManagedCredits(available))}</span></div>
+      <div><strong>${t('hl_minimum_topup')}</strong><span>${esc(_formatManagedCredits(min))}</span></div>
+      <div><strong>${t('hl_maximum_topup')}</strong><span>${esc(_formatManagedCredits(max))}</span></div>
     </div>
     ${ready?'':`<div class="onboarding-credit-topup">
-      <label class="onboarding-field"><span>Top-up amount</span><input id="onboardingAiTopUpInput" type="number" min="${esc(String(min/100))}" max="${esc(String(max/100))}" step="1" value="${esc(amount)}" oninput="ONBOARDING.form.aiTopUpAmount=this.value"></label>
-      <button type="button" class="sm-btn" onclick="startManagedCreditsCheckout()" ${loading?'disabled':''}>Add AI credits</button>
+      <label class="onboarding-field"><span>${t('hl_topup_amount')}</span><input id="onboardingAiTopUpInput" type="number" min="${esc(String(min/100))}" max="${esc(String(max/100))}" step="1" value="${esc(amount)}" oninput="ONBOARDING.form.aiTopUpAmount=this.value"></label>
+      <button type="button" class="sm-btn" onclick="startManagedCreditsCheckout()" ${loading?'disabled':''}>${t('hl_add_ai_credits')}</button>
     </div>`}
   </div>`;
 }
@@ -445,8 +445,8 @@ function _renderOnboardingBody(){
   const nextBtn=$('onboardingNextBtn');
   const backBtn=$('onboardingBackBtn');
   if(backBtn) backBtn.style.display=ONBOARDING.step>0?'':'none';
-  if(backBtn&&_isHostedOnboarding()) backBtn.textContent='Back';
-  if(nextBtn) nextBtn.textContent=_isHostedOnboarding()?(key==='finish'?'Open Agent':'Continue'):(key==='finish'?t('onboarding_open'):t('onboarding_continue'));
+  if(backBtn&&_isHostedOnboarding()) backBtn.textContent=t('hl_back');
+  if(nextBtn) nextBtn.textContent=_isHostedOnboarding()?(key==='finish'?t('hl_open_agent'):t('hl_continue')):(key==='finish'?t('onboarding_open'):t('onboarding_continue'));
 
   if(key==='system'){
     const hermesOk=system.hermes_found&&system.imports_ok;
@@ -493,7 +493,7 @@ function _renderOnboardingBody(){
           ONBOARDING.form.baseUrl=(managedProvider&&managedProvider.default_base_url)||'';
         }
         if(!ONBOARDING.managedCredits.config&&!ONBOARDING.managedCredits.loading)_refreshManagedCredits();
-        _setOnboardingNotice(_managedCreditsReady()?'Managed AI credits are ready.':'Add Managed AI credits before continuing.',_managedCreditsReady()?'success':'info');
+        _setOnboardingNotice(_managedCreditsReady()?t('hl_managed_ai_ready'):t('hl_add_prepaid_before_continue'),_managedCreditsReady()?'success':'info');
         body.innerHTML=_renderHostedProviderModeCards()+_renderManagedCreditsSetup();
         const modelSel=$('onboardingModelSelect');
         if(modelSel&&ONBOARDING.form.model)modelSel.value=ONBOARDING.form.model;
@@ -502,7 +502,7 @@ function _renderOnboardingBody(){
       const byokOptions=_renderByokProviderSelectOptions(_isManagedAiProvider(selectedId)?'openrouter':selectedId);
       const byokProvider=_isManagedAiProvider(selectedId)?_getOnboardingSetupProvider('openrouter'):provider;
       const byokShowBaseUrl=byokProvider&&byokProvider.requires_base_url;
-      _setOnboardingNotice(system.chat_ready?'Your hosted Hermes Agent is ready to chat.':'Connect a provider before using your hosted Hermes Agent.',system.chat_ready?'success':'info');
+      _setOnboardingNotice(system.chat_ready?t('hl_notice_agent_ready'):t('hl_notice_connect_provider'),system.chat_ready?'success':'info');
       body.innerHTML=`
         ${_renderHostedProviderModeCards()}
         <label class="onboarding-field">
@@ -567,7 +567,7 @@ function _renderOnboardingBody(){
 
     _setOnboardingNotice(
       _isHostedOnboarding()
-        ? (system.chat_ready?'Your hosted Hermes Agent is ready to chat.':'Connect a provider before using your hosted Hermes Agent.')
+        ? (system.chat_ready?t('hl_notice_agent_ready'):t('hl_notice_connect_provider'))
         : (system.chat_ready?t('onboarding_notice_setup_already_ready'):t('onboarding_notice_setup_required')),
       system.chat_ready?'success':'info'
     );
@@ -588,7 +588,7 @@ function _renderOnboardingBody(){
   if(key==='workspace'){
     if(_isHostedOnboarding()){
       ONBOARDING.form.workspace=_getHostedDefaultWorkspace();
-      _setOnboardingNotice('Choose the model Hermes should use for new chats.', 'info');
+      _setOnboardingNotice(t('hl_notice_choose_model'), 'info');
       body.innerHTML=`${_renderOnboardingModelField()}`;
       const modelSel=$('onboardingModelSelect');
       if(modelSel && ONBOARDING.form.model) modelSel.value=ONBOARDING.form.model;
@@ -636,7 +636,7 @@ function _renderOnboardingBody(){
         : `<div><strong>${t('onboarding_workspace_label')}</strong><span>${esc(ONBOARDING.form.workspace||t('onboarding_not_set'))}</span></div><div><strong>${t('onboarding_check_password')}</strong><span>${t(_getOnboardingPasswordSummaryKey(settings))}</span></div>`}
     </div>
     ${(!_isHostedOnboarding()&&ONBOARDING.form.baseUrl)?`<p class="onboarding-copy"><strong>${t('onboarding_base_url_label')}</strong> ${esc(ONBOARDING.form.baseUrl)}</p>`:''}
-    <p class="onboarding-copy">${_isHostedOnboarding()?'Your agent opens with the selected provider and model. You can change provider settings later from WebUI preferences.':t('onboarding_finish_help')}</p>`;
+    <p class="onboarding-copy">${_isHostedOnboarding()?t('hl_notice_agent_opens_selected'):t('onboarding_finish_help')}</p>`;
 }
 
 function _getOnboardingPasswordSummaryKey(settings){
@@ -773,7 +773,7 @@ async function _finishOnboarding(){
 async function skipOnboarding(){
   try{
     if(_isHostedOnboarding()&&!_hostedOnboardingReady()){
-      _setOnboardingNotice('Connect a provider first. Your hosted agent needs a working model before setup can be skipped.','warn');
+      _setOnboardingNotice(t('hl_notice_connect_provider'),'warn');
       return;
     }
     // Mark onboarding completed server-side without changing any config
@@ -794,7 +794,7 @@ async function nextOnboardingStep(){
       ONBOARDING.form.baseUrl=(($('onboardingBaseUrlInput')||{}).value||ONBOARDING.form.baseUrl||'').trim();
       if(!ONBOARDING.form.provider) throw new Error(t('onboarding_error_provider_required'));
       if(_isHostedOnboarding()&&_isManagedAiProvider(ONBOARDING.form.provider)&&!_managedCreditsReady()){
-        throw new Error('Add Managed AI credits before continuing.');
+        throw new Error(t('hl_add_prepaid_before_continue'));
       }
       if(ONBOARDING.form.provider==='custom' && !ONBOARDING.form.baseUrl) throw new Error(t('onboarding_error_base_url_required'));
       // For self-hosted providers (requires_base_url=True), gate Continue on a

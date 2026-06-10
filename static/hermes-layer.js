@@ -160,6 +160,21 @@
     });
   }
 
+  function hl(key, fallback){
+    var args = Array.prototype.slice.call(arguments, 2);
+    var value = '';
+    try {
+      if (typeof window.t === 'function') value = window.t.apply(null, [key].concat(args));
+    } catch (_) {}
+    if (!value || value === key) value = fallback || key;
+    if (args.length) {
+      value = String(value).replace(/\{(\d+)\}/g, function(match, index){
+        return Object.prototype.hasOwnProperty.call(args, index) ? String(args[index]) : match;
+      });
+    }
+    return value;
+  }
+
   function sessionUrl(){
     return new URL('api/hermes-layer/session', currentAgentBase()).href;
   }
@@ -274,18 +289,18 @@
 
   function openBackupsSurface(){
     surfaceShell(
-      'Backups',
-      'Full workspace backups include Hermes/WebUI data, manifest and checksums.',
-      '<div class="hl-surface-muted">Loading...</div>',
+      hl('hl_backups_title', 'Backups'),
+      hl('hl_backups_subtitle', 'Full workspace backups include Hermes/WebUI data, manifest and checksums.'),
+      '<div class="hl-surface-muted">' + escapeHtml(hl('loading', 'Loading...')) + '</div>',
       true
     );
     agentApiJson('api/hermes-layer/backups').then(function(result){
       renderBackupsSurface(result.backups || [], false, '');
     }).catch(function(error){
       surfaceShell(
-        'Backups',
-        'Full workspace backups include Hermes/WebUI data, manifest and checksums.',
-        '<div class="hl-surface-alert">' + escapeHtml(error.message || 'Backups failed.') + '</div>',
+        hl('hl_backups_title', 'Backups'),
+        hl('hl_backups_subtitle', 'Full workspace backups include Hermes/WebUI data, manifest and checksums.'),
+        '<div class="hl-surface-alert">' + escapeHtml(error.message || hl('hl_backup_failed', 'Backup failed.')) + '</div>',
         false
       );
     });
@@ -293,18 +308,18 @@
 
   function openWorkspaceSurface(message){
     surfaceShell(
-      'Agent status',
-      'Control your hosted Hermes Agent through Hermes Layer.',
-      '<div class="hl-surface-muted">Loading...</div>',
+      hl('hl_agent_status_title', 'Agent status'),
+      hl('hl_agent_status_subtitle', 'Control your hosted Hermes Agent through Hermes Layer.'),
+      '<div class="hl-surface-muted">' + escapeHtml(hl('hl_agent_status_loading', 'Loading agent status...')) + '</div>',
       true
     );
     agentApiJson('api/hermes-layer/workspace').then(function(result){
       renderWorkspaceSurface(result.workspace || {}, false, message || '');
     }).catch(function(error){
       surfaceShell(
-        'Agent status',
-        'Control your hosted Hermes Agent through Hermes Layer.',
-        '<div class="hl-surface-alert">' + escapeHtml(error.message || 'Agent status failed.') + '</div>',
+        hl('hl_agent_status_title', 'Agent status'),
+        hl('hl_agent_status_subtitle', 'Control your hosted Hermes Agent through Hermes Layer.'),
+        '<div class="hl-surface-alert">' + escapeHtml(error.message || hl('hl_agent_status_failed', 'Agent status failed.')) + '</div>',
         false
       );
     });
@@ -326,31 +341,31 @@
     var body =
       (message ? '<div class="hl-surface-alert">' + escapeHtml(message) + '</div>' : '') +
       '<div class="hl-surface-row">' +
-        '<div><h3>Your Hermes Agent</h3><p>These actions are mediated by Hermes Layer and audited by the control plane.</p></div>' +
-        '<button class="hl-surface-button" type="button" data-hl-refresh-workspace ' + (busy ? 'disabled' : '') + '>Refresh</button>' +
+        '<div><h3>' + escapeHtml(hl('hl_your_hermes_agent', 'Your Hermes Agent')) + '</h3><p>' + escapeHtml(hl('hl_agent_status_audit_notice', 'These actions are mediated by Hermes Layer and audited by the control plane.')) + '</p></div>' +
+        '<button class="hl-surface-button" type="button" data-hl-refresh-workspace ' + (busy ? 'disabled' : '') + '>' + escapeHtml(hl('hl_refresh', 'Refresh')) + '</button>' +
       '</div>' +
       '<div class="hl-surface-status-grid">' +
-        statusItem('Agent service', state, ['running', 'stopped'].indexOf(state) >= 0) +
-        statusItem('Health', health, health === 'healthy' || state === 'stopped') +
-        statusItem('Billing access', 'active', true) +
-        statusItem('Control plane', 'managed', true) +
+        statusItem(hl('hl_agent_service', 'Agent service'), state, ['running', 'stopped'].indexOf(state) >= 0) +
+        statusItem(hl('hl_health', 'Health'), health, health === 'healthy' || state === 'stopped') +
+        statusItem(hl('hl_billing_access', 'Billing access'), 'active', true) +
+        statusItem(hl('hl_control_plane', 'Control plane'), 'managed', true) +
       '</div>' +
       (workspace.errorMessage ? '<div class="hl-surface-alert">' + escapeHtml(workspace.errorMessage) + '</div>' : '') +
       '<div class="hl-surface-metrics">' +
-        metric('Name', workspace.name || 'Hermes Agent') +
-        metric('Last check', formatDate(workspace.lastHealthCheckAt)) +
-        metric('Updated', formatDate(workspace.updatedAt)) +
-        metric('Created', formatDate(workspace.createdAt)) +
+        metric(hl('hl_name', 'Name'), workspace.name || 'Hermes Agent') +
+        metric(hl('hl_last_check', 'Last check'), formatDate(workspace.lastHealthCheckAt)) +
+        metric(hl('hl_updated', 'Updated'), formatDate(workspace.updatedAt)) +
+        metric(hl('hl_created', 'Created'), formatDate(workspace.createdAt)) +
       '</div>' +
       '<div class="hl-action-grid">' +
-        '<button class="hl-surface-button ' + (primaryAction === 'start' ? 'is-primary' : '') + '" type="button" data-hl-workspace-action="start" ' + (busy || isBusyState || !canStart ? 'disabled' : '') + '>Start agent</button>' +
-        '<button class="hl-surface-button is-warning" type="button" data-hl-workspace-action="restart" ' + (busy || isBusyState || !canRestart ? 'disabled' : '') + '>Restart agent</button>' +
-        '<button class="hl-surface-button ' + (primaryAction === 'recover' ? 'is-primary' : '') + '" type="button" data-hl-workspace-action="recover" ' + (busy || isBusyState || !canRecover ? 'disabled' : '') + '>Recover agent</button>' +
-        '<button class="hl-surface-button is-danger" type="button" data-hl-workspace-action="stop" ' + (busy || isBusyState || !canStop ? 'disabled' : '') + '>Stop agent</button>' +
+        '<button class="hl-surface-button ' + (primaryAction === 'start' ? 'is-primary' : '') + '" type="button" data-hl-workspace-action="start" ' + (busy || isBusyState || !canStart ? 'disabled' : '') + '>' + escapeHtml(hl('hl_start_agent', 'Start agent')) + '</button>' +
+        '<button class="hl-surface-button is-warning" type="button" data-hl-workspace-action="restart" ' + (busy || isBusyState || !canRestart ? 'disabled' : '') + '>' + escapeHtml(hl('hl_restart_agent', 'Restart agent')) + '</button>' +
+        '<button class="hl-surface-button ' + (primaryAction === 'recover' ? 'is-primary' : '') + '" type="button" data-hl-workspace-action="recover" ' + (busy || isBusyState || !canRecover ? 'disabled' : '') + '>' + escapeHtml(hl('hl_recover_agent', 'Recover agent')) + '</button>' +
+        '<button class="hl-surface-button is-danger" type="button" data-hl-workspace-action="stop" ' + (busy || isBusyState || !canStop ? 'disabled' : '') + '>' + escapeHtml(hl('hl_stop_agent', 'Stop agent')) + '</button>' +
       '</div>';
     var root = surfaceShell(
-      'Agent status',
-      'Control your hosted Hermes Agent through Hermes Layer.',
+      hl('hl_agent_status_title', 'Agent status'),
+      hl('hl_agent_status_subtitle', 'Control your hosted Hermes Agent through Hermes Layer.'),
       body,
       busy
     );
@@ -364,15 +379,15 @@
       button.addEventListener('click', function(){
         var action = button.getAttribute('data-hl-workspace-action') || '';
         if (!action) return;
-        if (action === 'stop' && !window.confirm('Stop this hosted Hermes Agent? Scheduled jobs and chat will pause until it is started again.')) return;
-        renderWorkspaceSurface(workspace, true, action === 'recover' ? 'Recovering agent...' : action.charAt(0).toUpperCase() + action.slice(1) + ' requested...');
+        if (action === 'stop' && !window.confirm(hl('hl_stop_agent_confirm', 'Stop this hosted Hermes Agent? Scheduled jobs and chat will pause until it is started again.'))) return;
+        renderWorkspaceSurface(workspace, true, hl('hl_agent_action_requested', 'Agent action requested.'));
         agentApiJson('api/hermes-layer/workspace/action', {
           method: 'POST',
           body: JSON.stringify({ action: action })
         }).then(function(result){
-          renderWorkspaceSurface(result.workspace || workspace, false, 'Agent ' + (result.appliedAction || action) + ' completed.');
+          renderWorkspaceSurface(result.workspace || workspace, false, hl('hl_agent_action_completed', 'Agent action completed.'));
         }).catch(function(error){
-          renderWorkspaceSurface(workspace, false, error.message || 'Agent action failed.');
+          renderWorkspaceSurface(workspace, false, error.message || hl('hl_agent_status_failed', 'Agent status failed.'));
         });
       });
     });
@@ -382,53 +397,53 @@
     var rows = (backups || []).map(function(backup){
       var restorable = backup.status === 'completed' || backup.status === 'restored';
       var trigger = backup.trigger || 'manual';
-      var triggerLabel = trigger === 'scheduled' ? 'Automatic backup' : (trigger === 'imported' ? 'Imported backup' : 'Manual backup');
+      var triggerLabel = trigger === 'scheduled' ? hl('hl_automatic_backup', 'Automatic backup') : (trigger === 'imported' ? hl('hl_imported_backup', 'Imported backup') : hl('hl_manual_backup', 'Manual backup'));
       return '<div class="hl-backup-row">' +
         '<div class="hl-backup-main">' +
           '<strong>' + escapeHtml(backup.id) + '</strong>' +
-          '<span>' + escapeHtml(triggerLabel) + ' - Created ' + escapeHtml(formatDate(backup.createdAt)) + '</span>' +
+          '<span>' + escapeHtml(triggerLabel) + ' - ' + escapeHtml(hl('hl_backup_created', 'Created')) + ' ' + escapeHtml(formatDate(backup.createdAt)) + '</span>' +
         '</div>' +
         '<div class="hl-backup-meta">' +
           '<span>' + escapeHtml(backup.status || 'unknown') + '</span>' +
           '<span>' + escapeHtml(formatBytes(backup.sizeBytes)) + '</span>' +
-          '<button class="hl-surface-button" type="button" data-hl-download-backup="' + escapeHtml(backup.id) + '" ' + (restorable && !busy ? '' : 'disabled') + '>Download</button>' +
-          '<button class="hl-surface-button" type="button" data-hl-restore-backup="' + escapeHtml(backup.id) + '" ' + (restorable && !busy ? '' : 'disabled') + '>Restore</button>' +
+          '<button class="hl-surface-button" type="button" data-hl-download-backup="' + escapeHtml(backup.id) + '" ' + (restorable && !busy ? '' : 'disabled') + '>' + escapeHtml(hl('hl_download', 'Download')) + '</button>' +
+          '<button class="hl-surface-button" type="button" data-hl-restore-backup="' + escapeHtml(backup.id) + '" ' + (restorable && !busy ? '' : 'disabled') + '>' + escapeHtml(hl('hl_restore', 'Restore')) + '</button>' +
         '</div>' +
       '</div>';
     }).join('');
     var body =
       '<div class="hl-surface-row">' +
-        '<div><h3>Full Workspace Backup</h3><p>Archives restore Hermes/WebUI data after checksum verification. Exports can be imported back into this workspace.</p></div>' +
+        '<div><h3>' + escapeHtml(hl('hl_full_workspace_backup', 'Full Workspace Backup')) + '</h3><p>' + escapeHtml(hl('hl_backup_restore_notice', 'Archives restore Hermes/WebUI data after checksum verification. Exports can be imported back into this workspace.')) + '</p></div>' +
         '<div class="hl-surface-actions">' +
-          '<button class="hl-surface-button" type="button" data-hl-import-backup-button ' + (busy ? 'disabled' : '') + '>Import backup</button>' +
-          '<button class="hl-surface-button is-primary" type="button" data-hl-create-backup ' + (busy ? 'disabled' : '') + '>Create backup</button>' +
+          '<button class="hl-surface-button" type="button" data-hl-import-backup-button ' + (busy ? 'disabled' : '') + '>' + escapeHtml(hl('hl_import_backup', 'Import backup')) + '</button>' +
+          '<button class="hl-surface-button is-primary" type="button" data-hl-create-backup ' + (busy ? 'disabled' : '') + '>' + escapeHtml(hl('hl_create_backup', 'Create backup')) + '</button>' +
           '<input type="file" data-hl-import-backup hidden accept=".tar.gz,application/gzip,application/x-gzip">' +
         '</div>' +
       '</div>' +
       (message ? '<div class="hl-surface-alert">' + escapeHtml(message) + '</div>' : '') +
       '<div class="hl-surface-metrics">' +
-        metric('Backups', formatNumber((backups || []).length)) +
-        metric('Completed', formatNumber((backups || []).filter(function(item){ return item.status === 'completed' || item.status === 'restored'; }).length)) +
-        metric('Latest size', formatBytes((backups || [])[0] && (backups || [])[0].sizeBytes)) +
-        metric('Format', 'Full workspace') +
+        metric(hl('hl_backups_title', 'Backups'), formatNumber((backups || []).length)) +
+        metric(hl('hl_backup_completed', 'Completed'), formatNumber((backups || []).filter(function(item){ return item.status === 'completed' || item.status === 'restored'; }).length)) +
+        metric(hl('hl_latest_size', 'Latest size'), formatBytes((backups || [])[0] && (backups || [])[0].sizeBytes)) +
+        metric(hl('hl_format', 'Format'), 'Full workspace') +
       '</div>' +
-      '<div class="hl-backup-list">' + (rows || '<div class="hl-surface-muted">No backups yet.</div>') + '</div>';
+      '<div class="hl-backup-list">' + (rows || '<div class="hl-surface-muted">' + escapeHtml(hl('hl_no_backups_yet', 'No backups yet.')) + '</div>') + '</div>';
     var root = surfaceShell(
-      'Backups',
-      'Full workspace backups include Hermes/WebUI data, manifest and checksums.',
+      hl('hl_backups_title', 'Backups'),
+      hl('hl_backups_subtitle', 'Full workspace backups include Hermes/WebUI data, manifest and checksums.'),
       body,
       busy
     );
     var createButton = root.querySelector('[data-hl-create-backup]');
     if (createButton) {
       createButton.addEventListener('click', function(){
-        renderBackupsSurface(backups, true, 'Creating a full workspace backup...');
+        renderBackupsSurface(backups, true, hl('hl_backup_creating', 'Creating a full workspace backup...'));
         agentApiJson('api/hermes-layer/backups', { method: 'POST' }).then(function(){
           return agentApiJson('api/hermes-layer/backups');
         }).then(function(result){
-          renderBackupsSurface(result.backups || [], false, 'Backup completed.');
+          renderBackupsSurface(result.backups || [], false, hl('hl_backup_completed_msg', 'Backup completed.'));
         }).catch(function(error){
-          renderBackupsSurface(backups, false, error.message || 'Backup failed.');
+          renderBackupsSurface(backups, false, error.message || hl('hl_backup_failed', 'Backup failed.'));
         });
       });
     }
@@ -442,7 +457,7 @@
       importInput.addEventListener('change', function(){
         var file = importInput.files && importInput.files[0];
         if (!file) return;
-        renderBackupsSurface(backups, true, 'Importing full workspace backup...');
+        renderBackupsSurface(backups, true, hl('hl_backup_importing', 'Importing full workspace backup...'));
         agentApiJson('api/hermes-layer/backups/import', {
           method: 'POST',
           headers: { 'Content-Type': file.type || 'application/gzip' },
@@ -450,9 +465,9 @@
         }).then(function(){
           return agentApiJson('api/hermes-layer/backups');
         }).then(function(result){
-          renderBackupsSurface(result.backups || [], false, 'Backup imported.');
+          renderBackupsSurface(result.backups || [], false, hl('hl_backup_imported', 'Backup imported.'));
         }).catch(function(error){
-          renderBackupsSurface(backups, false, error.message || 'Backup import failed.');
+          renderBackupsSurface(backups, false, error.message || hl('hl_backup_failed', 'Backup failed.'));
         });
       });
     }
@@ -467,17 +482,17 @@
       button.addEventListener('click', function(){
         var backupId = button.getAttribute('data-hl-restore-backup') || '';
         if (!backupId) return;
-        if (!window.confirm('Restore this workspace from backup ' + backupId + '? Current agent data will be replaced.')) return;
-        renderBackupsSurface(backups, true, 'Restoring backup...');
+        if (!window.confirm(hl('hl_backup_restore_confirm', 'Restore this workspace from backup {0}? Current agent data will be replaced.', backupId))) return;
+        renderBackupsSurface(backups, true, hl('hl_backup_restoring', 'Restoring backup...'));
         agentApiJson('api/hermes-layer/restore', {
           method: 'POST',
           body: JSON.stringify({ backupId: backupId })
         }).then(function(){
           return agentApiJson('api/hermes-layer/backups');
         }).then(function(result){
-          renderBackupsSurface(result.backups || [], false, 'Restore completed.');
+          renderBackupsSurface(result.backups || [], false, hl('hl_backup_restored', 'Restore completed.'));
         }).catch(function(error){
-          renderBackupsSurface(backups, false, error.message || 'Restore failed.');
+          renderBackupsSurface(backups, false, error.message || hl('hl_backup_failed', 'Backup failed.'));
         });
       });
     });
@@ -509,9 +524,9 @@
     root.hidden = false;
     root.classList.add('is-loading');
     root.innerHTML =
-      '<button class="hl-account-avatar is-loading" type="button" data-hl-account-button aria-haspopup="menu" aria-expanded="false" aria-label="Account menu">' + accountIconMarkup() + '</button>' +
-      '<div class="hl-account-menu hl-account-menu-loading" data-hl-account-menu hidden role="menu" aria-label="Account">' +
-        '<div class="hl-account-loading">' + escapeHtml(message || 'Loading account...') + '</div>' +
+      '<button class="hl-account-avatar is-loading" type="button" data-hl-account-button aria-haspopup="menu" aria-expanded="false" aria-label="' + escapeHtml(hl('hl_account_menu', 'Account menu')) + '">' + accountIconMarkup() + '</button>' +
+      '<div class="hl-account-menu hl-account-menu-loading" data-hl-account-menu hidden role="menu" aria-label="' + escapeHtml(hl('hl_menu_account', 'Account')) + '">' +
+        '<div class="hl-account-loading">' + escapeHtml(message || hl('hl_account_loading', 'Loading account...')) + '</div>' +
       '</div>';
     bindAccountButton(root);
   }
@@ -534,7 +549,7 @@
     var status = String((subscription && subscription.status) || 'none').toLowerCase();
     var label = plan + ' - ' + humanizeSubscriptionValue(status);
     return '<div class="hl-account-subscription ' + subscriptionStatusClass(status) + '" data-hl-subscription-status="' + escapeHtml(status) + '">' +
-      '<span>Subscription</span>' +
+      '<span>' + escapeHtml(hl('hl_subscription', 'Subscription')) + '</span>' +
       '<strong>' + escapeHtml(label) + '</strong>' +
       '</div>';
   }
@@ -546,9 +561,20 @@
     try { label = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'EUR' }).format(available); }
     catch (_) { label = 'EUR ' + available.toFixed(2); }
     return '<div class="hl-account-subscription is-neutral" data-hl-ai-credits>' +
-      '<span>AI credits</span>' +
+      '<span>' + escapeHtml(hl('hl_ai_credits', 'AI credits')) + '</span>' +
       '<strong>' + escapeHtml(label) + '</strong>' +
       '</div>';
+  }
+
+  function localizedLinkLabel(link){
+    var action = String((link && link.action) || '');
+    var href = String((link && link.href) || '');
+    if (action === 'workspace') return hl('hl_menu_agent_status', 'Agent status');
+    if (action === 'backups') return hl('hl_menu_backups', 'Backups');
+    if (/\/app\/account(?:[?#/]|$)/.test(href)) return hl('hl_menu_account', 'Account');
+    if (/\/app\/billing(?:[?#/]|$)/.test(href)) return hl('hl_menu_billing', 'Billing');
+    if (/\/app\/support(?:[?#/]|$)/.test(href)) return hl('hl_menu_support', 'Support');
+    return (link && link.label) || '';
   }
 
   function renderAccountMenu(root, payload){
@@ -559,18 +585,19 @@
     var name = account.name || account.email || 'Account';
     var email = account.email || '';
     var linkMarkup = links.map(function(link){
+      var label = localizedLinkLabel(link);
       if (link.action) {
-        return '<button class="hl-account-link" type="button" data-hl-action="' + escapeHtml(link.action) + '" role="menuitem">' + escapeHtml(link.label) + '</button>';
+        return '<button class="hl-account-link" type="button" data-hl-action="' + escapeHtml(link.action) + '" role="menuitem">' + escapeHtml(label) + '</button>';
       }
       var target = link.target ? ' target="' + escapeHtml(link.target) + '" rel="noopener noreferrer"' : '';
-      return '<a class="hl-account-link" href="' + escapeHtml(link.href) + '"' + target + ' role="menuitem">' + escapeHtml(link.label) + '</a>';
+      return '<a class="hl-account-link" href="' + escapeHtml(link.href) + '"' + target + ' role="menuitem">' + escapeHtml(label) + '</a>';
     }).join('');
 
     root.hidden = false;
     root.classList.remove('is-loading');
     root.innerHTML =
-      '<button class="hl-account-avatar" type="button" data-hl-account-button aria-haspopup="menu" aria-expanded="false" aria-label="Account menu">' + accountIconMarkup() + '</button>' +
-      '<div class="hl-account-menu" data-hl-account-menu hidden role="menu" aria-label="Account">' +
+      '<button class="hl-account-avatar" type="button" data-hl-account-button aria-haspopup="menu" aria-expanded="false" aria-label="' + escapeHtml(hl('hl_account_menu', 'Account menu')) + '">' + accountIconMarkup() + '</button>' +
+      '<div class="hl-account-menu" data-hl-account-menu hidden role="menu" aria-label="' + escapeHtml(hl('hl_menu_account', 'Account')) + '">' +
         '<div class="hl-account-profile">' +
           '<div class="hl-account-name">' + escapeHtml(name) + '</div>' +
           '<div class="hl-account-email">' + escapeHtml(email) + '</div>' +
@@ -580,7 +607,7 @@
         '<div class="hl-account-separator"></div>' +
         linkMarkup +
         '<div class="hl-account-separator"></div>' +
-        '<button class="hl-account-logout" type="button" data-hl-account-logout role="menuitem">Log out</button>' +
+        '<button class="hl-account-logout" type="button" data-hl-account-logout role="menuitem">' + escapeHtml(hl('hl_logout', 'Log out')) + '</button>' +
       '</div>';
 
     var logout = root.querySelector('[data-hl-account-logout]');
@@ -616,7 +643,7 @@
         if (payload) renderAccountMenu(root, payload);
       })
       .catch(function(error){
-        renderAccountLoadingMenu(root, 'Account unavailable. Reload this page to retry.');
+        renderAccountLoadingMenu(root, hl('hl_account_unavailable_reload', 'Account unavailable. Reload this page to retry.'));
         console.error('Hermes Layer account session failed', error);
       });
   }
