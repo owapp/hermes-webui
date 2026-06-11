@@ -8398,10 +8398,15 @@ function _connectorFieldHtml(field, disabled){
   </label>`;
 }
 
-function _connectorDetailHtml(connector){
-  const statusClass=_connectorStatusClass(connector.status);
-  const fields=Array.isArray(connector.fields)?connector.fields:[];
-  const disabled=!connector.configuration_supported;
+function _connectorValueBlock(label,value,extraClass=''){
+  if(!value) return '';
+  return `<div class="connector-value-block ${esc(extraClass)}">
+    <span class="connector-field-label">${esc(label)}</span>
+    <code>${esc(value)}</code>
+  </div>`;
+}
+
+function _connectorStandardFragments(connector,statusClass){
   const docs=connector.docs_url?`<a class="connector-docs-link" href="${esc(connector.docs_url)}" target="_blank" rel="noopener">${esc(t('connectors_docs'))}</a>`:'';
   const missing=Array.isArray(connector.missing_required)&&connector.missing_required.length
     ? `<div class="connector-warning">${esc(t('connectors_missing_required',connector.missing_required.join(', ')))}</div>`
@@ -8409,6 +8414,49 @@ function _connectorDetailHtml(connector){
   const notes=Array.isArray(connector.notes)&&connector.notes.length
     ? `<div class="connector-note">${connector.notes.map(note=>`<div>${esc(note)}</div>`).join('')}</div>`
     : '';
+  return {docs,missing,notes,status:`<span class="connector-status connector-status-${statusClass}">${esc(_connectorStatusLabel(connector.status))}</span>`};
+}
+
+function _developerApiDetailHtml(connector,statusClass){
+  const fragments=_connectorStandardFragments(connector,statusClass);
+  const keys=Array.isArray(connector.api_keys)?connector.api_keys:[];
+  const keyRows=keys.length?keys.map(key=>`<div class="connector-key-row">
+    <div>
+      <div class="connector-key-label">${esc(key.label||'API key')}</div>
+      <div class="connector-key-meta">${esc(key.tokenPrefix||'hlapi_...')} · ${esc(key.createdAt||'')}</div>
+    </div>
+    <button type="button" class="provider-card-btn provider-card-btn-ghost" onclick="revokeDeveloperApiKey('${esc(key.id)}')">${esc(t('connectors_revoke_key'))}</button>
+  </div>`).join(''):`<div class="connector-empty-detail">${esc(t('connectors_no_api_keys'))}</div>`;
+  return `<div class="connector-detail-card" data-active-connector="${esc(connector.id)}">
+    <div class="connector-detail-head">
+      <div>
+        <div class="connector-detail-title">${esc(connector.label||connector.id)}</div>
+        <div class="connector-detail-meta">${esc(connector.description||'')}</div>
+      </div>
+      ${fragments.status}
+    </div>
+    ${fragments.docs}
+    ${fragments.missing}
+    ${fragments.notes}
+    ${_connectorValueBlock(t('connectors_public_base_url'),connector.public_base_url)}
+    <div class="connector-key-list">${keyRows}</div>
+    <div class="connector-create-key">
+      <input class="connector-input" id="developerApiKeyLabel" type="text" value="${esc(t('connectors_default_key_label'))}" autocomplete="off" spellcheck="false">
+      <button type="button" class="provider-card-btn" onclick="createDeveloperApiKey()">${esc(t('connectors_create_key'))}</button>
+      <button type="button" class="provider-card-btn provider-card-btn-ghost" onclick="testConnector('api_server')">${esc(t('connectors_test'))}</button>
+    </div>
+    <div class="connector-action-result" id="connectorActionResult" aria-live="polite"></div>
+  </div>`;
+}
+
+function _connectorDetailHtml(connector){
+  const statusClass=_connectorStatusClass(connector.status);
+  if(connector.id==='api_server'){
+    return _developerApiDetailHtml(connector,statusClass);
+  }
+  const fields=Array.isArray(connector.fields)?connector.fields:[];
+  const disabled=!connector.configuration_supported;
+  const fragments=_connectorStandardFragments(connector,statusClass);
   const requiredEnv=Array.isArray(connector.required_env)&&connector.required_env.length
     ? `<div class="connector-note">${esc(t('connectors_required_env',connector.required_env.join(', ')))}</div>`
     : '';
@@ -8428,11 +8476,13 @@ function _connectorDetailHtml(connector){
         <div class="connector-detail-title">${esc(connector.label||connector.id)}</div>
         <div class="connector-detail-meta">${esc(connector.description||'')}</div>
       </div>
-      <span class="connector-status connector-status-${statusClass}">${esc(_connectorStatusLabel(connector.status))}</span>
+      ${fragments.status}
     </div>
-    ${docs}
-    ${missing}
-    ${notes}
+    ${fragments.docs}
+    ${fragments.missing}
+    ${fragments.notes}
+    ${_connectorValueBlock(t('connectors_public_url'),connector.public_url)}
+    ${_connectorValueBlock(t('connectors_signing_secret'),connector.signing_secret,'connector-secret-once')}
     ${requiredEnv}
     ${routeCount}
     ${form}
@@ -8476,6 +8526,9 @@ async function saveConnectorConfig(id){
       const idx=_connectorsCache.findIndex(c=>c.id===id);
       if(idx!==-1) _connectorsCache[idx]=data.connector;
       _renderAllConnectorSurfacePanels();
+      if(data.connector.signing_secret){
+        _setConnectorActionResult(t('connectors_signing_secret_once')+' '+data.connector.signing_secret);
+      }
     }
     showToast(t('connectors_saved'));
   }catch(e){
@@ -8511,6 +8564,38 @@ async function testConnector(id){
     _setConnectorActionResult((data&&data.message)||t(ok?'connectors_test_ok':'connectors_test_failed'),!ok);
   }catch(e){
     _setConnectorActionResult(e.message||t('connectors_test_failed'),true);
+  }
+}
+
+async function createDeveloperApiKey(){
+  const input=$('developerApiKeyLabel');
+  const label=(input&&input.value?input.value:t('connectors_default_key_label')).trim();
+  _setConnectorActionResult(t('connectors_creating_key'));
+  try{
+    const data=await api('/api/connectors/api_server/keys',{
+      method:'POST',
+      body:JSON.stringify({label}),
+    });
+    await loadConnectorSurfacePanel('developer_api',true);
+    _setConnectorActionResult(t('connectors_api_key_created')+' '+((data&&data.apiKey)||''));
+    showToast(t('connectors_api_key_created_toast'));
+  }catch(e){
+    _setConnectorActionResult(e.message||t('connectors_create_key_failed'),true);
+    showToast(t('connectors_create_key_failed'),'error');
+  }
+}
+
+async function revokeDeveloperApiKey(keyId){
+  if(!keyId) return;
+  _setConnectorActionResult(t('connectors_revoking_key'));
+  try{
+    await api('/api/connectors/api_server/keys/'+encodeURIComponent(keyId),{method:'DELETE'});
+    await loadConnectorSurfacePanel('developer_api',true);
+    _setConnectorActionResult(t('connectors_key_revoked'));
+    showToast(t('connectors_key_revoked'));
+  }catch(e){
+    _setConnectorActionResult(e.message||t('connectors_revoke_key_failed'),true);
+    showToast(t('connectors_revoke_key_failed'),'error');
   }
 }
 
