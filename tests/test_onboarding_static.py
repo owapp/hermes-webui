@@ -31,9 +31,20 @@ def test_onboarding_js_exposes_bootstrap_hooks():
     js = read("static/onboarding.js")
     assert "async function loadOnboardingWizard()" in js
     assert "async function nextOnboardingStep()" in js
+    assert "function _setOnboardingBusy(busy)" in js
+    assert "if(ONBOARDING.busy)return;" in js
     assert "api('/api/onboarding/status')" in js
     assert "api('/api/onboarding/setup'" in js
     assert "api('/api/onboarding/complete'" in js
+
+
+def test_onboarding_finish_button_has_busy_feedback():
+    js = read("static/onboarding.js")
+    css = read("static/style.css")
+    assert "nextBtn.setAttribute('aria-busy','true')" in js
+    assert 'class="onboarding-btn-spinner"' in js
+    assert ".onboarding-actions .sm-btn.loading" in css
+    assert ".onboarding-btn-spinner" in css
 
 
 def test_onboarding_uses_i18n_helpers():

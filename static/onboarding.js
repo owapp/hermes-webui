@@ -1,4 +1,4 @@
-const ONBOARDING={status:null,step:0,steps:['system','setup','workspace','password','finish'],form:{provider:'openrouter',configMode:'byok',workspace:'',model:'',password:'',apiKey:'',baseUrl:'',aiTopUpAmount:''},active:false,probe:{status:'idle',error:null,detail:'',models:null,probedKey:''},managedCredits:{config:null,state:null,loading:false,error:''}};
+const ONBOARDING={status:null,step:0,steps:['system','setup','workspace','password','finish'],form:{provider:'openrouter',configMode:'byok',workspace:'',model:'',password:'',apiKey:'',baseUrl:'',aiTopUpAmount:''},active:false,busy:false,probe:{status:'idle',error:null,detail:'',models:null,probedKey:''},managedCredits:{config:null,state:null,loading:false,error:''}};
 
 function _isHostedOnboarding(){
   return !!(((ONBOARDING.status||{}).hosted||{}).enabled);
@@ -264,6 +264,39 @@ function _setOnboardingNotice(msg,kind='info'){
   el.textContent=msg;
 }
 
+function _getOnboardingNextLabel(){
+  const key=ONBOARDING.steps[ONBOARDING.step];
+  if(_isHostedOnboarding())return key==='finish'?t('hl_open_agent'):t('hl_continue');
+  return key==='finish'?t('onboarding_open'):t('onboarding_continue');
+}
+
+function _renderOnboardingNextButton(){
+  const nextBtn=$('onboardingNextBtn');
+  if(!nextBtn)return;
+  const label=_getOnboardingNextLabel();
+  nextBtn.disabled=!!ONBOARDING.busy;
+  nextBtn.classList.toggle('loading',!!ONBOARDING.busy);
+  if(ONBOARDING.busy){
+    nextBtn.setAttribute('aria-busy','true');
+    nextBtn.innerHTML=`<span class="onboarding-btn-spinner" aria-hidden="true"></span><span>${esc(label)}</span>`;
+  }else{
+    nextBtn.removeAttribute('aria-busy');
+    nextBtn.textContent=label;
+  }
+}
+
+function _setOnboardingBusy(busy){
+  ONBOARDING.busy=!!busy;
+  _renderOnboardingNextButton();
+  const backBtn=$('onboardingBackBtn');
+  const skipBtn=$('onboardingSkipBtn');
+  if(backBtn)backBtn.disabled=!!busy;
+  if(skipBtn){
+    skipBtn.disabled=!!busy||(_isHostedOnboarding()&&!_hostedOnboardingReady());
+    skipBtn.style.cursor=busy?'wait':'';
+  }
+}
+
 function _getOnboardingWorkspaceChoices(){
   const items=((ONBOARDING.status||{}).workspaces||{}).items||[];
   return items.length?items:[{name:'Home',path:ONBOARDING.form.workspace||''}];
@@ -446,7 +479,7 @@ function _renderOnboardingBody(){
   const backBtn=$('onboardingBackBtn');
   if(backBtn) backBtn.style.display=ONBOARDING.step>0?'':'none';
   if(backBtn&&_isHostedOnboarding()) backBtn.textContent=t('hl_back');
-  if(nextBtn) nextBtn.textContent=_isHostedOnboarding()?(key==='finish'?t('hl_open_agent'):t('hl_continue')):(key==='finish'?t('onboarding_open'):t('onboarding_continue'));
+  if(nextBtn) _renderOnboardingNextButton();
 
   if(key==='system'){
     const hermesOk=system.hermes_found&&system.imports_ok;
@@ -704,6 +737,7 @@ async function loadOnboardingWizard(){
 }
 
 function prevOnboardingStep(){
+  if(ONBOARDING.busy)return;
   if(ONBOARDING.step===0)return;
   ONBOARDING.step--;
   _renderOnboardingSteps();
@@ -771,6 +805,8 @@ async function _finishOnboarding(){
 }
 
 async function skipOnboarding(){
+  if(ONBOARDING.busy)return;
+  _setOnboardingBusy(true);
   try{
     if(_isHostedOnboarding()&&!_hostedOnboardingReady()){
       _setOnboardingNotice(t('hl_notice_connect_provider'),'warn');
@@ -783,10 +819,14 @@ async function skipOnboarding(){
     showToast(t('onboarding_skipped')||'Setup skipped');
   }catch(e){
     _setOnboardingNotice((e.message||String(e)),'warn');
+  }finally{
+    if(ONBOARDING.active)_setOnboardingBusy(false);
   }
 }
 
 async function nextOnboardingStep(){
+  if(ONBOARDING.busy)return;
+  _setOnboardingBusy(true);
   try{
     if(ONBOARDING.steps[ONBOARDING.step]==='setup'){
       ONBOARDING.form.provider=(($('onboardingProviderSelect')||{}).value||ONBOARDING.form.provider||'').trim();
@@ -833,6 +873,8 @@ async function nextOnboardingStep(){
     _renderOnboardingBody();
   }catch(e){
     _setOnboardingNotice(e.message||String(e),'warn');
+  }finally{
+    if(ONBOARDING.active)_setOnboardingBusy(false);
   }
 }
 
