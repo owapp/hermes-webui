@@ -977,12 +977,18 @@
   .system-health-foot{font-size:11px;color:var(--muted);line-height:1.45;opacity:.82;}
   .app-titlebar-icon{display:inline-flex;align-items:center;color:var(--accent);}
   .app-titlebar-icon img{display:block;width:16px;height:16px;object-fit:contain;}
+  .app-titlebar-brand{display:none;align-items:center;justify-content:center;width:20px;height:20px;color:var(--accent);pointer-events:none;}
+  .app-titlebar-brand img{display:block;width:20px;height:20px;object-fit:contain;}
   .app-titlebar-title{font-size:12px;font-weight:600;color:var(--text);letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:60vw;}
   .app-titlebar-sub{font-size:10px;color:var(--muted);background:var(--hover-bg);padding:2px 7px;border-radius:4px;font-family:'SF Mono',ui-monospace,monospace;white-space:nowrap;flex-shrink:0;}
   .app-titlebar-sub[hidden]{display:none;}
   .app-titlebar-hamburger,.app-titlebar-spacer{display:none;width:32px;height:32px;flex-shrink:0;}
   .app-titlebar-hamburger{-webkit-app-region:no-drag;align-items:center;justify-content:center;background:none;border:none;color:var(--muted);border-radius:8px;cursor:pointer;padding:0;-webkit-tap-highlight-color:transparent;transition:background-color .15s,color .15s;}
   .app-titlebar-hamburger:hover{background:var(--hover-bg);color:var(--text);}
+  @media(min-width:641px){
+    .app-titlebar-brand{position:absolute;left:max(12px,env(safe-area-inset-left,0px));top:calc(var(--app-titlebar-safe-top) + 9px);display:inline-flex;}
+    .app-titlebar-inner .app-titlebar-icon{display:none;}
+  }
   .hl-hosted-boot-blocker{position:fixed;inset:0;z-index:1040;display:flex;align-items:center;justify-content:center;background:rgba(7,12,19,.12);backdrop-filter:blur(1px);-webkit-app-region:no-drag;}
   .hl-hosted-boot-blocker[hidden]{display:none!important;}
   .hl-hosted-boot-spinner{width:28px;height:28px;border-radius:999px;border:2px solid color-mix(in srgb,var(--text) 14%,transparent);border-top-color:var(--accent);animation:hl-spin .8s linear infinite;}
