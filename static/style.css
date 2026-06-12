@@ -3829,6 +3829,7 @@ main.main > #mainPlugin{display:none;}
 .connector-form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:12px;}
 .connector-field{display:flex;flex-direction:column;gap:6px;min-width:0;}
 .connector-field-label{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);}
+.connector-field-help{font-size:11px;line-height:1.35;color:var(--muted);}
 .connector-required{font-size:10px;color:#f59e0b;text-transform:none;letter-spacing:0;margin-left:4px;}
 .connector-input{width:100%;background:var(--input-bg,var(--code-bg));color:var(--text);border:1px solid var(--border2);border-radius:8px;padding:8px 9px;font-size:13px;line-height:1.35;outline:none;}
 .connector-input:focus{border-color:var(--accent);box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 18%,transparent);}
@@ -3844,6 +3845,7 @@ main.main > #mainPlugin{display:none;}
 .connector-key-label{font-size:13px;font-weight:700;color:var(--text);}
 .connector-key-meta{font-size:11px;color:var(--muted);margin-top:2px;overflow-wrap:anywhere;}
 .connector-create-key{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:8px;align-items:center;margin-top:12px;}
+.connector-key-name-field{margin:0;}
 .connector-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:14px;}
 .connector-action-result{font-size:12px;color:var(--muted);margin-top:9px;min-height:18px;}
 .connector-action-error{color:#f87171;}

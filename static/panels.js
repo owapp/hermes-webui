@@ -8440,10 +8440,15 @@ function _developerApiDetailHtml(connector,statusClass){
     ${fragments.notes}
     ${_connectorValueBlock(t('connectors_public_base_url'),connector.public_base_url)}
     <div class="connector-key-list">${keyRows}</div>
+    <div class="connector-note">${esc(t('connectors_developer_api_help'))}</div>
     <div class="connector-create-key">
-      <input class="connector-input" id="developerApiKeyLabel" type="text" value="${esc(t('connectors_default_key_label'))}" autocomplete="off" spellcheck="false">
+      <label class="connector-field connector-key-name-field" for="developerApiKeyLabel">
+        <span class="connector-field-label">${esc(t('connectors_key_name'))}</span>
+        <input class="connector-input" id="developerApiKeyLabel" type="text" value="${esc(t('connectors_default_key_label'))}" autocomplete="off" spellcheck="false">
+        <span class="connector-field-help">${esc(t('connectors_key_name_help'))}</span>
+      </label>
       <button type="button" class="provider-card-btn" onclick="createDeveloperApiKey()">${esc(t('connectors_create_key'))}</button>
-      <button type="button" class="provider-card-btn provider-card-btn-ghost" onclick="testConnector('api_server')">${esc(t('connectors_test'))}</button>
+      <button type="button" class="provider-card-btn provider-card-btn-ghost" onclick="testConnector('api_server')">${esc(t('connectors_check_api_access'))}</button>
     </div>
     <div class="connector-action-result" id="connectorActionResult" aria-live="polite"></div>
   </div>`;
@@ -8466,10 +8471,18 @@ function _connectorDetailHtml(connector){
   const form=fields.length
     ? `<div class="connector-form">${fields.map(field=>_connectorFieldHtml(field,disabled)).join('')}</div>`
     : `<div class="connector-empty-detail">${esc(disabled?t('connectors_configure_runtime_env'):t('connectors_no_fields'))}</div>`;
-  const toggleLabel=connector.enabled?t('connectors_disable'):t('connectors_enable');
+  const isWebhook=connector.id==='webhook';
+  const toggleLabel=isWebhook
+    ? connector.enabled?t('connectors_disable_webhook'):t('connectors_enable_webhook')
+    : connector.enabled?t('connectors_disable'):t('connectors_enable');
+  const saveLabel=isWebhook?t('connectors_save_webhook'):t('connectors_save');
+  const testLabel=isWebhook?t('connectors_check_webhook'):t('connectors_test');
   const toggleDisabled=(!connector.toggle_supported||disabled)?' disabled':'';
   const saveDisabled=disabled?' disabled':'';
   const testDisabled=(!connector.test_supported)?' disabled':'';
+  const deleteButton=connector.delete_supported&&connector.can_delete
+    ? `<button type="button" class="provider-card-btn provider-card-btn-danger" onclick="deleteConnector('${esc(connector.id)}')">${esc(t('connectors_delete_webhook'))}</button>`
+    : '';
   return `<div class="connector-detail-card" data-active-connector="${esc(connector.id)}">
     <div class="connector-detail-head">
       <div>
@@ -8487,9 +8500,10 @@ function _connectorDetailHtml(connector){
     ${routeCount}
     ${form}
     <div class="connector-actions">
-      <button type="button" class="provider-card-btn" onclick="saveConnectorConfig('${esc(connector.id)}')"${saveDisabled}>${esc(t('connectors_save'))}</button>
-      <button type="button" class="provider-card-btn provider-card-btn-ghost" onclick="testConnector('${esc(connector.id)}')"${testDisabled}>${esc(t('connectors_test'))}</button>
+      <button type="button" class="provider-card-btn" onclick="saveConnectorConfig('${esc(connector.id)}')"${saveDisabled}>${esc(saveLabel)}</button>
+      <button type="button" class="provider-card-btn provider-card-btn-ghost" onclick="testConnector('${esc(connector.id)}')"${testDisabled}>${esc(testLabel)}</button>
       <button type="button" class="provider-card-btn provider-card-btn-ghost" onclick="toggleConnector('${esc(connector.id)}',${connector.enabled?'false':'true'})"${toggleDisabled}>${esc(toggleLabel)}</button>
+      ${deleteButton}
     </div>
     <div class="connector-action-result" id="connectorActionResult" aria-live="polite"></div>
   </div>`;
@@ -8553,6 +8567,31 @@ async function toggleConnector(id,enabled){
   }catch(e){
     _setConnectorActionResult(e.message||t('connectors_toggle_failed'),true);
     showToast(t('connectors_toggle_failed'),'error');
+  }
+}
+
+async function deleteConnector(id){
+  if(id!=='webhook') return;
+  const ok=await showConfirmDialog({
+    title:t('connectors_delete_webhook_confirm_title'),
+    message:t('connectors_delete_webhook_confirm_message'),
+    confirmLabel:t('connectors_delete_webhook'),
+    danger:true,
+    focusCancel:true,
+  });
+  if(!ok) return;
+  _setConnectorActionResult(t('connectors_deleting_webhook'));
+  try{
+    const data=await api('/api/connectors/'+encodeURIComponent(id),{method:'DELETE'});
+    if(data&&data.connector){
+      const idx=_connectorsCache.findIndex(c=>c.id===id);
+      if(idx!==-1) _connectorsCache[idx]=data.connector;
+      _renderAllConnectorSurfacePanels();
+    }
+    showToast(t('connectors_webhook_deleted'));
+  }catch(e){
+    _setConnectorActionResult(e.message||t('connectors_delete_webhook_failed'),true);
+    showToast(t('connectors_delete_webhook_failed'),'error');
   }
 }
 
