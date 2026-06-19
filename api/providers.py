@@ -7,6 +7,7 @@ multi-provider support).
 
 from __future__ import annotations
 
+import atexit
 import base64
 import hashlib
 import json
@@ -75,6 +76,7 @@ _PROVIDER_QUOTA_TIMEOUT_SECONDS = 3.0
 _ACCOUNT_USAGE_SUBPROCESS_TIMEOUT_SECONDS = 35.0
 _ACCOUNT_USAGE_CACHE_TTL_SECONDS = 45.0
 _ACCOUNT_USAGE_CACHE_MAX_ENTRIES = 64
+_ACCOUNT_USAGE_WORKER_IDLE_SECONDS = 5 * 60
 _ACCOUNT_USAGE_PROVIDERS = frozenset({"openai-codex", "anthropic"})
 
 # Upper bound on simultaneous profile-isolated quota probe subprocesses.
@@ -129,6 +131,11 @@ _account_usage_probe_semaphore: threading.BoundedSemaphore | None = None
 # represented as non-None snapshots and remain cacheable.
 _account_usage_status_cache: dict[tuple[str, str, str], tuple[float, Any]] = {}
 _account_usage_status_cache_lock = threading.Lock()
+_account_usage_worker_pool: dict[str, list["_AccountUsageProbeWorker"]] = {}
+_account_usage_worker_pool_lock = threading.Lock()
+
+# Per-home worker pool configuration for probe tail-latency reduction (#3787)
+_ACCOUNT_USAGE_WORKERS_PER_HOME = 2
 
 
 def _get_account_usage_probe_semaphore() -> threading.BoundedSemaphore:
@@ -146,7 +153,7 @@ def _get_account_usage_probe_semaphore() -> threading.BoundedSemaphore:
 # code (_ACCOUNT_USAGE_PARENT_DEATHSIG_BOOTSTRAP) also covers the grandchild
 # fork inside the child, but this preexec_fn handles the direct child-process
 # case.  Returns None on non-POSIX or when prctl is unavailable so that
-# subprocess.run() works on Windows/macOS without changes.
+# subprocess startup works on Windows/macOS without changes.
 def _account_usage_preexec_fn() -> None:
     try:
         import ctypes
@@ -159,6 +166,7 @@ def _account_usage_preexec_fn() -> None:
 _ACCOUNT_USAGE_SUBPROCESS_CODE = r"""
 import base64
 import json
+import os
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
@@ -627,17 +635,48 @@ def _fetch_codex_account_usage_from_pool():
         return None
 
 
-provider = sys.argv[1]
-api_key = sys.argv[2] or None
-try:
-    snapshot = fetch_account_usage(provider, api_key=api_key)
-except Exception:
-    snapshot = None
-if str(provider or "").strip().lower() == "openai-codex":
-    pool_snapshot = _fetch_codex_account_usage_from_pool()
-    if isinstance(getattr(pool_snapshot, "pool", None), dict):
-        snapshot = pool_snapshot
-print(json.dumps(_snapshot_payload(snapshot)))
+def _fetch_snapshot(provider, api_key, env_var=None):
+    previous = os.environ.get(env_var) if env_var else None
+    had_previous = bool(env_var and env_var in os.environ)
+    if env_var and api_key:
+        os.environ[env_var] = api_key
+    try:
+        try:
+            snapshot = fetch_account_usage(provider, api_key=api_key)
+        except Exception:
+            snapshot = None
+        if str(provider or "").strip().lower() == "openai-codex":
+            pool_snapshot = _fetch_codex_account_usage_from_pool()
+            if isinstance(getattr(pool_snapshot, "pool", None), dict):
+                snapshot = pool_snapshot
+        return _snapshot_payload(snapshot)
+    finally:
+        if env_var and api_key:
+            if had_previous:
+                os.environ[env_var] = previous
+            else:
+                os.environ.pop(env_var, None)
+
+
+def _run_worker():
+    for raw_line in sys.stdin:
+        try:
+            request = json.loads(raw_line)
+            provider = request.get("provider")
+            api_key = request.get("api_key") or None
+            env_var = request.get("env_var") or None
+            payload = _fetch_snapshot(provider, api_key, env_var=env_var)
+        except Exception:
+            payload = None
+        print(json.dumps(payload), flush=True)
+
+
+if len(sys.argv) > 1 and sys.argv[1] == "--worker":
+    _run_worker()
+else:
+    provider = sys.argv[1]
+    api_key = sys.argv[2] or None
+    print(json.dumps(_fetch_snapshot(provider, api_key)), flush=True)
 """
 
 # SECTION: Provider ↔ env var mapping
@@ -953,6 +992,19 @@ def _provider_has_key(provider_id: str) -> bool:
                 return True
             if _provider_value_counts_as_api_key(provider_id, os.getenv(alias)):
                 return True
+    # Check credential pool — covers custom providers registered via
+    # `hermes auth add` which store keys in auth.json (not config.yaml).
+    # Must be outside the `if env_var:` block above: custom providers
+    # (custom:bothub, etc.) have no env var, so that block is skipped.
+    # Uses the cached _has_explicit_pool_credentials helper which also
+    # filters gh-cli / GITHUB_TOKEN ambient entries so copilot doesn't
+    # appear just because `gh` is installed.
+    try:
+        from api.config import _has_explicit_pool_credentials
+        if _has_explicit_pool_credentials(provider_id):
+            return True
+    except ImportError:
+        pass
 
     cfg = get_config()
     # Check model.api_key — only match if this provider is the active one.
@@ -1030,6 +1082,23 @@ def _get_provider_api_key(provider_id: str) -> str | None:
                     return os.getenv(cp_key[2:-1], "").strip() or None
                 if _provider_value_counts_as_api_key(provider_id, cp_key):
                     return cp_key
+    # Fallback: try credential pool (e.g. bothub key stored via auth.json)
+    try:
+        from api.config import _has_explicit_pool_credentials, _resolve_provider_alias
+        if _has_explicit_pool_credentials(provider_id):
+            from agent.credential_pool import load_pool
+            # Must resolve alias here too: _has_explicit_pool_credentials does it
+            # internally, but load_pool sees the original unresolved provider_id.
+            _resolved = _resolve_provider_alias(provider_id)
+            pool = load_pool(_resolved)
+            if pool:
+                entry = pool.select()
+                if entry:
+                    key = getattr(entry, "runtime_api_key", "") or getattr(entry, "access_token", "")
+                    if key:
+                        return key
+    except ImportError:
+        pass
     return None
 
 
@@ -1187,6 +1256,306 @@ def _account_usage_payload_to_snapshot(payload: Any) -> Any:
     )
 
 
+class _AccountUsageProbeWorker:
+    def __init__(self, home: Path):
+        self.home = Path(home)
+        self.last_used = time.monotonic()
+        self._lock = threading.RLock()
+        self._proc: subprocess.Popen[str] | None = None
+        self._closed = False
+
+    def close(self) -> None:
+        with self._lock:
+            proc = self._proc
+            self._proc = None
+            self._closed = True
+        self._close_process(proc)
+
+    @staticmethod
+    def _close_process(proc: subprocess.Popen[str] | None) -> None:
+        if proc is None:
+            return
+        for stream_name in ("stdin", "stdout"):
+            stream = getattr(proc, stream_name, None)
+            try:
+                if stream is not None:
+                    stream.close()
+            except Exception:
+                pass
+        try:
+            if proc.poll() is None:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=1.0)
+                except Exception:
+                    proc.kill()
+        except Exception:
+            pass
+
+    def fetch(self, provider: str, *, api_key: str | None = None) -> Any:
+        if not self._lock.acquire(blocking=False):
+            return _fetch_account_usage_once_for_home(provider, self.home, api_key=api_key)
+        try:
+            return self._fetch_locked(provider, api_key=api_key)
+        finally:
+            self._lock.release()
+
+    def _fetch_locked(self, provider: str, *, api_key: str | None = None) -> Any:
+        self.last_used = time.monotonic()
+        proc = self._ensure_process(provider)
+        if proc is None or proc.stdin is None or proc.stdout is None:
+            return None
+
+        request = json.dumps({
+            "provider": provider,
+            "api_key": api_key or "",
+            "env_var": _provider_env_var_for((provider or "").strip().lower()),
+        }) + "\n"
+        result: dict[str, Any] = {}
+
+        def round_trip() -> None:
+            try:
+                proc.stdin.write(request)
+                proc.stdin.flush()
+                result["line"] = proc.stdout.readline()
+            except Exception as exc:
+                result["error"] = exc
+
+        thread = threading.Thread(target=round_trip, daemon=True)
+        thread.start()
+        thread.join(_ACCOUNT_USAGE_SUBPROCESS_TIMEOUT_SECONDS)
+        self.last_used = time.monotonic()
+        if thread.is_alive():
+            self.close()
+            thread.join(timeout=1.0)
+            logger.debug("Account usage worker for %s timed out", provider)
+            return None
+        if result.get("error") is not None:
+            exc = result["error"]
+            self.close()
+            logger.debug(
+                "Account usage worker for %s failed",
+                provider,
+                exc_info=(type(exc), exc, exc.__traceback__),
+            )
+            return None
+
+        line = str(result.get("line") or "").strip()
+        if not line:
+            self.close()
+            logger.debug("Account usage worker for %s exited before responding", provider)
+            return None
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            self.close()
+            logger.debug("Account usage worker for %s returned invalid JSON", provider)
+            return None
+        return _account_usage_payload_to_snapshot(payload)
+
+    def _ensure_process(self, provider: str) -> subprocess.Popen[str] | None:
+        if self._proc is not None and self._proc.poll() is None:
+            return self._proc
+        old_proc = self._proc
+        self._proc = None
+        self._close_process(old_proc)
+        try:
+            from api.config import PYTHON_EXE
+        except Exception:
+            PYTHON_EXE = sys.executable or "python3"
+
+        kwargs: dict[str, Any] = {
+            "stdin": subprocess.PIPE,
+            "stdout": subprocess.PIPE,
+            "stderr": subprocess.DEVNULL,
+            "text": True,
+            "bufsize": 1,
+        }
+        if hasattr(os, "fork"):  # POSIX
+            kwargs["preexec_fn"] = _account_usage_preexec_fn
+
+        try:
+            self._proc = subprocess.Popen(
+                [
+                    PYTHON_EXE,
+                    "-c",
+                    _ACCOUNT_USAGE_PARENT_DEATHSIG_BOOTSTRAP + _ACCOUNT_USAGE_SUBPROCESS_CODE,
+                    "--worker",
+                ],
+                env=_account_usage_subprocess_env(self.home, provider, None),
+                **kwargs,
+            )
+            self._closed = False
+        except Exception:
+            self._proc = None
+            logger.debug("Account usage worker for %s failed to launch", provider, exc_info=True)
+        return self._proc
+
+
+def _launch_account_usage_worker_process(
+    home: Path,
+    provider: str,
+    *,
+    stdin: Any = subprocess.PIPE,
+    stdout: Any = subprocess.PIPE,
+) -> subprocess.Popen[str] | None:
+    try:
+        from api.config import PYTHON_EXE
+    except Exception:
+        PYTHON_EXE = sys.executable or "python3"
+
+    kwargs: dict[str, Any] = {
+        "stdin": stdin,
+        "stdout": stdout,
+        "stderr": subprocess.DEVNULL,
+        "text": True,
+        "bufsize": 1,
+    }
+    if hasattr(os, "fork"):  # POSIX
+        kwargs["preexec_fn"] = _account_usage_preexec_fn
+
+    try:
+        return subprocess.Popen(
+            [
+                PYTHON_EXE,
+                "-c",
+                _ACCOUNT_USAGE_PARENT_DEATHSIG_BOOTSTRAP + _ACCOUNT_USAGE_SUBPROCESS_CODE,
+                "--worker",
+            ],
+            env=_account_usage_subprocess_env(home, provider, None),
+            **kwargs,
+        )
+    except Exception:
+        logger.debug("Account usage worker for %s failed to launch", provider, exc_info=True)
+        return None
+
+
+def _fetch_account_usage_once_for_home(provider: str, home: Path, *, api_key: str | None = None) -> Any:
+    proc = _launch_account_usage_worker_process(Path(home), provider)
+    if proc is None or proc.stdin is None or proc.stdout is None:
+        _AccountUsageProbeWorker._close_process(proc)
+        return None
+    request = json.dumps({
+        "provider": provider,
+        "api_key": api_key or "",
+        "env_var": _provider_env_var_for((provider or "").strip().lower()),
+    }) + "\n"
+    try:
+        stdout, _stderr = proc.communicate(request, timeout=_ACCOUNT_USAGE_SUBPROCESS_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired:
+        _AccountUsageProbeWorker._close_process(proc)
+        return None
+    except Exception:
+        _AccountUsageProbeWorker._close_process(proc)
+        return None
+    try:
+        line = str(stdout or "").splitlines()[0]
+        payload = json.loads(line.strip())
+    except json.JSONDecodeError:
+        return None
+    except IndexError:
+        return None
+    return _account_usage_payload_to_snapshot(payload)
+
+
+def _get_account_usage_probe_worker(home: Path) -> "_AccountUsageProbeWorker | None":
+    """Return a worker with its lock already held, or None if saturated.
+
+    The caller MUST release worker._lock after use (typically via try/finally).
+    Holding the lock across the handoff eliminates the TOCTOU window that would
+    let two concurrent probes both observe the same worker as free.
+    """
+    key = str(Path(home))
+    stale: list[_AccountUsageProbeWorker] = []
+    claimed: _AccountUsageProbeWorker | None = None
+    with _account_usage_worker_pool_lock:
+        existing_workers = _account_usage_worker_pool.get(key)
+        workers: list[_AccountUsageProbeWorker]
+        if not existing_workers:
+            workers = [_AccountUsageProbeWorker(Path(home)) for _ in range(_ACCOUNT_USAGE_WORKERS_PER_HOME)]
+        else:
+            stale = [worker for worker in existing_workers if worker._closed]
+            workers = [worker for worker in existing_workers if not worker._closed]
+            while len(workers) < _ACCOUNT_USAGE_WORKERS_PER_HOME:
+                workers.append(_AccountUsageProbeWorker(Path(home)))
+        _account_usage_worker_pool[key] = workers
+        for worker in workers:
+            if worker._lock.acquire(blocking=False):
+                claimed = worker
+                break
+    for worker in stale:
+        worker.close()
+    return claimed
+
+
+def _cleanup_account_usage_probe_workers(
+    *,
+    now: float | None = None,
+    idle_seconds: float = _ACCOUNT_USAGE_WORKER_IDLE_SECONDS,
+) -> None:
+    cutoff = time.monotonic() if now is None else now
+    stale: list[tuple[str, _AccountUsageProbeWorker]] = []
+    with _account_usage_worker_pool_lock:
+        for key, workers in list(_account_usage_worker_pool.items()):
+            for worker in workers:
+                if worker._lock.acquire(blocking=False):
+                    try:
+                        proc = worker._proc
+                        is_dead = worker._closed or (proc is not None and proc.poll() is not None)
+                        if is_dead or cutoff - worker.last_used >= idle_seconds:
+                            stale.append((key, worker))
+                    finally:
+                        worker._lock.release()
+            remaining_workers = [w for w in workers if not any(k == key and w == sw for k, sw in stale)]
+            if not remaining_workers:
+                _account_usage_worker_pool.pop(key, None)
+            else:
+                # Replenish to N so partial cleanup doesn't permanently shrink the pool
+                while len(remaining_workers) < _ACCOUNT_USAGE_WORKERS_PER_HOME:
+                    remaining_workers.append(_AccountUsageProbeWorker(Path(key)))
+                _account_usage_worker_pool[key] = remaining_workers
+    for _key, worker in stale:
+        worker.close()
+
+
+def _close_account_usage_probe_workers() -> None:
+    with _account_usage_worker_pool_lock:
+        workers = [w for wlist in _account_usage_worker_pool.values() for w in wlist]
+        _account_usage_worker_pool.clear()
+    _close_account_usage_probe_worker_list(workers)
+
+
+def _close_account_usage_probe_worker_list(workers: list[_AccountUsageProbeWorker]) -> None:
+    for worker in workers:
+        worker.close()
+
+
+def _close_account_usage_probe_workers_async(*, provider_id: str | None = None) -> None:
+    with _account_usage_worker_pool_lock:
+        if provider_id:
+            active_home = str(_get_hermes_home())
+            workers_to_close = []
+            for key, wlist in list(_account_usage_worker_pool.items()):
+                if key == active_home:
+                    workers_to_close.extend(wlist)
+                    _account_usage_worker_pool.pop(key, None)
+        else:
+            workers_to_close = [w for wlist in _account_usage_worker_pool.values() for w in wlist]
+            _account_usage_worker_pool.clear()
+    if not workers_to_close:
+        return
+    thread = threading.Thread(
+        target=_close_account_usage_probe_worker_list,
+        args=(workers_to_close,),
+        daemon=True,
+        name="account-usage-worker-close",
+    )
+    thread.start()
+
+
+atexit.register(_close_account_usage_probe_workers)
+
+
 def _account_usage_cache_key(provider: str, home: Path, api_key: str | None) -> tuple[str, str, str]:
     key_fingerprint = ""
     if api_key:
@@ -1212,10 +1581,11 @@ def invalidate_account_usage_status_cache(provider_id: str | None = None) -> Non
     with _account_usage_status_cache_lock:
         if not normalized:
             _account_usage_status_cache.clear()
-            return
-        for key in list(_account_usage_status_cache):
-            if key[0] == normalized:
-                _account_usage_status_cache.pop(key, None)
+        else:
+            for key in list(_account_usage_status_cache):
+                if key[0] == normalized:
+                    _account_usage_status_cache.pop(key, None)
+    _close_account_usage_probe_workers_async(provider_id=normalized or None)
 
 
 def _set_cached_account_usage(
@@ -1247,51 +1617,17 @@ def _set_cached_account_usage(
 
 def _agent_fetch_account_usage_for_home(provider: str, home: Path, *, api_key: str | None = None) -> Any:
     try:
-        from api.config import PYTHON_EXE
+        _cleanup_account_usage_probe_workers()
+        worker = _get_account_usage_probe_worker(home)
+        if worker is not None:
+            try:
+                return worker._fetch_locked(provider, api_key=api_key)
+            finally:
+                worker._lock.release()
+        return _fetch_account_usage_once_for_home(provider, home, api_key=api_key)
     except Exception:
-        PYTHON_EXE = sys.executable or "python3"
-
-    try:
-        # On POSIX (Linux/macOS), wire parent-death signal so the child dies
-        # cleanly if the WebUI parent terminates.  preexec_fn is not safe on
-        # Windows, where OS-level process-tree cleanup handles child orphans.
-        kwargs: dict[str, Any] = {
-            "stdin": subprocess.DEVNULL,
-            "stdout": subprocess.PIPE,
-            "stderr": subprocess.PIPE,
-            "text": True,
-            "timeout": _ACCOUNT_USAGE_SUBPROCESS_TIMEOUT_SECONDS,
-            "check": False,
-        }
-        if hasattr(os, "fork"):  # POSIX
-            kwargs["preexec_fn"] = _account_usage_preexec_fn
-
-        proc = subprocess.run(
-            [
-                PYTHON_EXE, "-c",
-                _ACCOUNT_USAGE_PARENT_DEATHSIG_BOOTSTRAP + _ACCOUNT_USAGE_SUBPROCESS_CODE,
-                provider,
-                api_key or "",
-            ],
-            env=_account_usage_subprocess_env(home, provider, api_key),
-            **kwargs,
-        )
-    except subprocess.TimeoutExpired:
-        logger.debug("Account usage probe for %s timed out", provider)
+        logger.debug("Account usage probe for %s failed", provider, exc_info=True)
         return None
-    except Exception:
-        logger.debug("Account usage probe for %s failed to launch", provider, exc_info=True)
-        return None
-
-    if proc.returncode != 0:
-        logger.debug("Account usage probe for %s exited with status %s", provider, proc.returncode)
-        return None
-    try:
-        payload = json.loads((proc.stdout or "").strip() or "null")
-    except json.JSONDecodeError:
-        logger.debug("Account usage probe for %s returned invalid JSON", provider)
-        return None
-    return _account_usage_payload_to_snapshot(payload)
 
 
 def _fetch_account_usage_with_profile_context(provider: str, *, refresh: bool = False) -> Any:
@@ -1302,8 +1638,7 @@ def _fetch_account_usage_with_profile_context(provider: str, *, refresh: bool = 
     memory by spawning more than _MAX_CONCURRENT_ACCOUNT_USAGE_PROBES probe
     subprocesses simultaneously.  Each probe runs up to 35 s.
 
-    A warm worker-pool (reuse of persistent subprocess handles) is a natural
-    follow-up if this first slice proves insufficient in production.
+    Warm per-profile worker processes handle the actual probe requests.
     """
     home = _get_hermes_home()
     api_key = _get_provider_api_key(provider)
@@ -2039,6 +2374,14 @@ def get_providers() -> dict[str, Any]:
             if cp_api_key.startswith("${") and cp_api_key.endswith("}"):
                 env_var = cp_api_key[2:-1]
                 cp_has_key = bool(os.getenv(env_var, "").strip())
+            # Fallback: check credential pool (key added via hermes auth add)
+            if not cp_has_key:
+                try:
+                    from api.config import _has_explicit_pool_credentials
+                    if _has_explicit_pool_credentials(cp_id):
+                        cp_has_key = True
+                except ImportError:
+                    pass
             providers.append({
                 "id": cp_id,
                 "display_name": cp_name,
@@ -2123,6 +2466,7 @@ def set_provider_key(provider_id: str, api_key: str | None) -> dict[str, Any]:
     # Using invalidate_models_cache() instead of reload_config() to avoid
     # disrupting active streaming sessions that may be reading config.cfg.
     invalidate_models_cache()
+    invalidate_account_usage_status_cache(provider_id)
 
     return {
         "ok": True,

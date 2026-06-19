@@ -173,7 +173,8 @@ def test_hosted_mode_brands_browser_title_without_renaming_hermes_agent_ui():
     assert "function hostedDocumentAssistantName()" in UI_JS
     assert "window.__hermesLayerHosted ? 'Hermes Layer Agent' : assistantDisplayName()" in UI_JS
     assert "document.title=hostedDocumentAssistantName();" in UI_JS
-    assert "sessionTitle+' \\u2014 '+hostedDocumentAssistantName()" in UI_JS
+    assert "const assistantName=typeof hostedDocumentAssistantName==='function'?hostedDocumentAssistantName():assistantDisplayName();" in UI_JS
+    assert "document.title=sessionTitle+' \\u2014 '+assistantName;" in UI_JS
     assert "document.title=typeof hostedDocumentAssistantName==='function'?hostedDocumentAssistantName():name;" in BOOT_JS
 
 

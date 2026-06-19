@@ -31,6 +31,7 @@ SOURCE_LABELS = {
     'slack': 'Slack',
     'telegram': 'Telegram',
     'tool': 'Tool',
+    'tui': 'TUI',
     'webui': 'WebUI',
     'weixin': 'Weixin',
 }
@@ -47,7 +48,7 @@ def normalize_agent_session_source(raw_source: str | None) -> dict:
 
     if raw == 'webui':
         session_source = 'webui'
-    elif raw == 'cli':
+    elif raw in {'cli', 'tui'}:
         session_source = 'cli'
     elif raw in MESSAGING_SOURCES:
         session_source = 'messaging'
@@ -172,11 +173,19 @@ def is_cli_session_row(row: dict) -> bool:
     source_label = _safe_lower(row.get("source_label"))
     if "webui" in {source, source_tag, raw_source, source_name, source_label}:
         return False
+    non_cli_sources = MESSAGING_SOURCES | {"cron", "tool", "api", "api_server"}
+    if {source, source_tag, raw_source, source_name, source_label} & non_cli_sources:
+        return False
     if source == "messaging":
         return False
     if source == "cli":
         return True
-    if source_tag == "cli" or raw_source == "cli" or source_name == "cli" or source_label == "cli":
+    if (
+        source_tag in {"cli", "tui"}
+        or raw_source in {"cli", "tui"}
+        or source_name in {"cli", "tui"}
+        or source_label in {"cli", "tui"}
+    ):
         return True
 
     # Legacy imported CLI rows may only be marked as CLI in sidebar metadata.
@@ -201,6 +210,14 @@ def is_cli_session_row_visible(row: dict) -> bool:
     message_count = _as_positive_int(row.get("actual_message_count") or row.get("message_count"))
     if message_count <= 0:
         return False
+
+    if "tui" in {
+        _normalize_source_name(row.get("source")),
+        _normalize_source_name(row.get("source_tag")),
+        _normalize_source_name(row.get("raw_source")),
+        _normalize_source_name(row.get("source_label")),
+    }:
+        return True
 
     if _has_cli_lineage(row):
         return True
@@ -375,10 +392,20 @@ def _project_agent_session_rows(rows: list[dict]) -> list[dict]:
         ):
             if key in tip:
                 merged[key] = tip[key]
-        if not merged.get('title'):
-            merged['title'] = tip.get('title')
-        if not merged.get('source'):
-            merged['source'] = tip.get('source')
+        if str(tip.get('source') or '').strip().lower() == 'tui':
+            # TUI continuation rows are user-visible session segments (#6, #17,
+            # ...), not opaque compression snapshots. Keep navigation pointed at
+            # the latest tip and show that tip's title so the newest conversation
+            # can be found by its visible TUI name.
+            if tip.get('title'):
+                merged['title'] = tip.get('title')
+            if tip.get('source'):
+                merged['source'] = tip.get('source')
+        else:
+            if not merged.get('title'):
+                merged['title'] = tip.get('title')
+            if not merged.get('source'):
+                merged['source'] = tip.get('source')
         merged['_lineage_root_id'] = row['id']
         merged['_lineage_tip_id'] = tip['id']
         merged['_compression_segment_count'] = segment_count
@@ -396,6 +423,7 @@ def read_importable_agent_session_rows(
     limit: int | None = 200,
     log=None,
     exclude_sources: tuple[str, ...] | None = ("cron", "webui"),
+    include_sources: tuple[str, ...] | None = None,
 ) -> list[dict]:
     """Return agent sessions projected as importable conversations.
 
@@ -409,7 +437,9 @@ def read_importable_agent_session_rows(
     sidebar. This mirrors Hermes Agent CLI's session-list behaviour: interactive
     views should stay focused on user-facing conversations, while callers that
     need a source-specific diagnostic view can opt out by passing
-    ``exclude_sources=None``.
+    ``exclude_sources=None``. ``include_sources`` is an additional narrowing
+    filter; callers that want an include-only query should explicitly pass
+    ``exclude_sources=None`` so the default exclusions do not also apply.
     """
     db_path = Path(db_path)
     if not db_path.exists():
@@ -447,14 +477,82 @@ def read_importable_agent_session_rows(
         origin_chat_id_expr = _optional_col('origin_chat_id', session_cols)
         origin_user_id_expr = _optional_col('origin_user_id', session_cols)
         platform_expr = _optional_col('platform', session_cols)
-        user_message_count_expr = (
-            "COUNT(CASE WHEN LOWER(m.role) = 'user' THEN 1 END)"
-            if 'role' in message_cols
-            else "COUNT(m.id)"
-        )
+        # Older/minimal state.db schemas can have NO ``messages`` table at all,
+        # or a ``messages`` table without a ``session_id`` / ``timestamp`` column.
+        # The projection SQL below joins ``messages`` and aggregates
+        # ``MAX(m.timestamp)`` unconditionally, so on those schemas the query
+        # raised ``sqlite3.OperationalError`` — which the caller
+        # (``get_cli_sessions``) swallows into an empty list, silently hiding
+        # ALL imported/CLI/agent sessions from the sidebar. Detect the columns
+        # and degrade gracefully (mirrors ``read_session_lineage_metadata``):
+        # only join/aggregate ``messages`` when it's actually usable, otherwise
+        # fall back to the per-session ``s.message_count`` / ``s.started_at``. (#3762)
+        messages_has_session_id = 'session_id' in message_cols
+        messages_has_timestamp = 'timestamp' in message_cols
+        use_messages_join = messages_has_session_id
+        count_col = 'id' if 'id' in message_cols else 'session_id'
+
+        # Defensive index prime (#3887). The candidate-ordering query below sorts
+        # sessions by a correlated ``MAX(mx.timestamp)`` subquery over ``messages``.
+        # That is fast only when the agent's standard
+        # ``idx_messages_session ON messages(session_id, timestamp)`` index exists.
+        # A normally-migrated hermes-agent state.db has it, but a db that lost its
+        # migrations (older hermes-agent, or a hand-rebuilt/reimported db) does
+        # not — and the subquery then degrades to a full ``messages`` scan per
+        # candidate session, stalling ``/api/sessions`` for seconds on every
+        # refresh (the 5s-TTL cache never settles). Priming the index is a no-op
+        # (~free) when it already exists, and self-heals an affected db in
+        # milliseconds. Best-effort: degrade silently on a read-only db or any
+        # error so the listing never fails because of the prime.
+        if messages_has_session_id and messages_has_timestamp:
+            try:
+                cur.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_messages_session "
+                    "ON messages(session_id, timestamp)"
+                )
+                conn.commit()
+            except sqlite3.Error:
+                pass  # read-only db / locked / older schema — degrade gracefully
+
+        if use_messages_join:
+            actual_count_expr = f"COUNT(m.{count_col})"
+            if 'role' in message_cols:
+                user_message_count_expr = "COUNT(CASE WHEN LOWER(m.role) = 'user' THEN 1 END)"
+            else:
+                user_message_count_expr = f"COUNT(m.{count_col})"
+            last_activity_expr = "MAX(m.timestamp)" if messages_has_timestamp else "NULL"
+            join_clause = "LEFT JOIN messages m ON m.session_id = s.id"
+            group_by_clause = "GROUP BY s.id"
+        else:
+            # No usable messages table: use the denormalized per-session counts
+            # and ``started_at`` so the rows still surface in the sidebar.
+            actual_count_expr = "s.message_count"
+            user_message_count_expr = "s.message_count"
+            last_activity_expr = "NULL"
+            join_clause = ""
+            group_by_clause = ""
+
+        if use_messages_join and messages_has_timestamp:
+            order_by_clause = "ORDER BY COALESCE(MAX(m.timestamp), s.started_at) DESC"
+            candidate_order_clause = (
+                "ORDER BY COALESCE(\n"
+                "                        (SELECT MAX(mx.timestamp) FROM messages mx WHERE mx.session_id = s.id),\n"
+                "                        s.started_at\n"
+                "                    ) DESC,\n"
+                "                    s.started_at DESC"
+            )
+        else:
+            order_by_clause = "ORDER BY s.started_at DESC"
+            candidate_order_clause = "ORDER BY s.started_at DESC"
 
         where_clauses = ["s.source IS NOT NULL"]
         params: list[object] = []
+        if include_sources:
+            included = tuple(str(source) for source in include_sources if source)
+            if included:
+                placeholders = ", ".join("?" for _ in included)
+                where_clauses.append(f"s.source IN ({placeholders})")
+                params.extend(included)
         if exclude_sources:
             excluded = tuple(str(source) for source in exclude_sources if source)
             if excluded:
@@ -477,9 +575,9 @@ def read_importable_agent_session_rows(
                    {parent_expr},
                    {ended_expr},
                    {end_reason_expr},
-                   COUNT(m.id) AS actual_message_count,
+                   {actual_count_expr} AS actual_message_count,
                    {user_message_count_expr} AS actual_user_message_count,
-                   MAX(m.timestamp) AS last_activity
+                   {last_activity_expr} AS last_activity
         """
         if limit is not None:
             result_limit = max(0, int(limit))
@@ -500,19 +598,15 @@ def read_importable_agent_session_rows(
                     SELECT s.id
                     FROM sessions s
                     WHERE {' AND '.join(where_clauses)}
-                    ORDER BY COALESCE(
-                        (SELECT MAX(mx.timestamp) FROM messages mx WHERE mx.session_id = s.id),
-                        s.started_at
-                    ) DESC,
-                    s.started_at DESC
+                    {candidate_order_clause}
                     LIMIT ?
                 )
                 {select_sql}
                 FROM sessions s
                 JOIN candidates c ON c.id = s.id
-                LEFT JOIN messages m ON m.session_id = s.id
-                GROUP BY s.id
-                ORDER BY COALESCE(MAX(m.timestamp), s.started_at) DESC
+                {join_clause}
+                {group_by_clause}
+                {order_by_clause}
                 """,
                 [*params, candidate_limit],
             )
@@ -521,10 +615,10 @@ def read_importable_agent_session_rows(
                 f"""
                 {select_sql}
                 FROM sessions s
-                LEFT JOIN messages m ON m.session_id = s.id
+                {join_clause}
                 WHERE {' AND '.join(where_clauses)}
-                GROUP BY s.id
-                ORDER BY COALESCE(MAX(m.timestamp), s.started_at) DESC
+                {group_by_clause}
+                {order_by_clause}
                 """,
                 params,
             )

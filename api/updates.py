@@ -13,6 +13,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import subprocess
 import threading
 import time
@@ -643,9 +644,24 @@ def _check_repo_branch(path, name, *, fetch=True):
 
 
 def _check_repo(path, name):
-    """Check if a git repo is behind its latest release. Returns dict or None."""
+    """Check if a git repo is behind its latest release. Returns dict or None.
+
+    The returned dict (when not None) always carries a ``dirty: bool`` reflecting
+    the working-tree state vs HEAD. A dirty install at-or-past the latest release
+    tag used to silently report "Up to date" with no remediation affordance, so
+    the Settings panel reads this flag to offer ``apply_force_update`` (issue
+    #4085).
+
+    When ``.git`` is absent (Docker images, pip installs), returns a minimal dict
+    with ``no_git: True`` and ``behind: None`` so the frontend can distinguish
+    "can't check" from "up to date" (issue #4356).
+    """
     if path is None or not (path / '.git').exists():
-        return None
+        return {
+            'name': name,
+            'behind': None,
+            'no_git': True,
+        }
 
     # Fetch tags first so update prompts track published releases, not every
     # development commit that lands on master/main after the latest release.
@@ -666,19 +682,43 @@ def _check_repo(path, name):
             release_info = dict(release_info)
             release_info['error'] = message
             release_info['stale_check'] = True
+            release_info['dirty'] = _is_dirty(path)
             return release_info
         return {
             'name': name,
             'behind': None,
             'error': message,
             'stale_check': True,
+            'dirty': _is_dirty(path),
         }
 
     release_info = _check_repo_release(path, name)
     if release_info is not None:
+        release_info = dict(release_info)
+        release_info['dirty'] = _is_dirty(path)
         return release_info
 
-    return _check_repo_branch(path, name, fetch=False)
+    branch_info = _check_repo_branch(path, name, fetch=False)
+    if branch_info is not None:
+        branch_info = dict(branch_info)
+        branch_info['dirty'] = _is_dirty(path)
+        return branch_info
+    return None
+
+
+def _is_dirty(path: Path, timeout: int = 1) -> bool:
+    """Return True when the working tree has uncommitted changes vs HEAD.
+
+    Same primitive as ``_dirty_suffix`` (issue #4085): ``git diff-index
+    --quiet HEAD --`` exits 0 on a clean tree and 1 on a dirty tree (not an
+    error). Real errors (timeout, missing git, fatal) are conservatively
+    reported as clean so a transient probe failure never produces a false-
+    positive "local changes" alert.
+    """
+    out, ok = _run_git(['diff-index', '--quiet', 'HEAD', '--'], path, timeout=timeout)
+    if ok:
+        return False
+    return not out or out.startswith('git exited with status ')
 
 
 def _ignored_agent_update_info() -> dict:
@@ -1025,6 +1065,34 @@ def summarize_update_payload(updates: dict, llm_callback=None, *, target: str | 
 # ── Self-update application ───────────────────────────────────────────────────
 
 
+def _purge_agent_pycache(repo_dir: Path) -> None:
+    """Delete all __pycache__ dirs under *repo_dir* so the next import
+    recompiles from source, avoiding stale-bytecode errors after git pull.
+
+    ``os.execv()`` replaces the process image but does not touch the
+    on-disk bytecode cache.  When a ``git pull`` writes new ``.py`` files
+    whose mtime lands within the same second as the pre-existing ``.pyc``
+    files, CPython may trust the stale cache and serve an old class
+    definition.  The mismatch between cached class symbols and newly-imported
+    supporting modules causes ``AttributeError`` (e.g. a method added in
+    the same update is missing from the cached ``AIAgent`` class).
+
+    This is safe to call right before ``os.execv()`` because the current
+    process is about to be replaced — losing the bytecode cache is harmless
+    and forces a clean recompilation on the next startup.
+    """
+    if repo_dir is None or not repo_dir.exists():
+        return
+    try:
+        for pycache in repo_dir.rglob("__pycache__"):
+            try:
+                shutil.rmtree(pycache, ignore_errors=True)
+            except OSError:
+                pass
+    except Exception:
+        pass
+
+
 def _schedule_restart(delay: float = 2.0) -> None:
     """Re-exec this process after *delay* seconds.
 
@@ -1061,6 +1129,14 @@ def _schedule_restart(delay: float = 2.0) -> None:
         # released atomically by the kernel.
         with _apply_lock:
             _wait_until_restart_safe()
+            # Purge bytecode caches so the new process imports from
+            # current source.  Without this, Python may serve stale .pyc
+            # files whose mtime matches the just-pulled .py files,
+            # causing AttributeError when new methods are missing from
+            # cached class definitions.
+            if _AGENT_DIR is not None:
+                _purge_agent_pycache(Path(_AGENT_DIR))
+            _purge_agent_pycache(REPO_ROOT)
             try:
                 # Re-exec into the just-pulled image.
                 #
