@@ -390,7 +390,7 @@ function _renderManagedCreditsSetup(){
   const max=Number(config.maxTopUpCents||50000);
   const ready=_managedCreditsReady();
   const amount=ONBOARDING.form.aiTopUpAmount||((min/100).toFixed(2));
-  const defaultModel=config.defaultModel||'openrouter/auto';
+  const defaultModel=config.defaultModel||'hermes-layer/auto';
   if(!ONBOARDING.form.model)ONBOARDING.form.model=defaultModel;
   const status=loading?t('hl_loading_credits'):error?error:(ready?t('hl_managed_ai_ready'):t('hl_add_prepaid_before_continue'));
   return `<div class="onboarding-managed-ai">
@@ -522,7 +522,7 @@ function _renderOnboardingBody(){
         if(!_isManagedAiProvider(ONBOARDING.form.provider)){
           const managedProvider=_getOnboardingSetupProvider(_managedProviderId());
           ONBOARDING.form.provider=_managedProviderId();
-          ONBOARDING.form.model=(managedProvider&&managedProvider.default_model)||ONBOARDING.form.model||'openrouter/auto';
+          ONBOARDING.form.model=(managedProvider&&managedProvider.default_model)||ONBOARDING.form.model||'hermes-layer/auto';
           ONBOARDING.form.baseUrl=(managedProvider&&managedProvider.default_base_url)||'';
         }
         if(!ONBOARDING.managedCredits.config&&!ONBOARDING.managedCredits.loading)_refreshManagedCredits();

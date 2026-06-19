@@ -5,6 +5,7 @@
 
 ### Changed
 - **Hosted gateway connector controls are clearer in Hermes Layer.** Webhook routes now use explicit actions (`Save webhook`, `Check webhook`, `Enable/Disable webhook`) and expose a destructive `Delete webhook` action with confirmation. Developer API no longer presents the empty state as a missing `api_key` field; it labels the key name input and explains that created keys are used as Bearer tokens with the public workspace API base URL.
+- **Hermes Layer hosted Managed AI now exposes only the branded automatic model.** Hosted workspaces normalize the Managed AI picker to `hermes-layer/auto`, including stale configs that still contain the internal upstream model name, so the model selector does not show provider implementation details or duplicate `custom/...` aliases.
 
 ## [v0.51.310] — 2026-06-07 — Release JZ (stage-3760 — long-press project chips to delete on touch)
 

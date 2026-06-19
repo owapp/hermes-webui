@@ -33,18 +33,22 @@ from api.workspace import get_last_workspace, load_workspaces
 logger = logging.getLogger(__name__)
 
 
+_HERMES_LAYER_MANAGED_AI_FALLBACK_MODEL = "hermes-layer/auto"
+_HERMES_LAYER_MANAGED_AI_DEFAULT_MODEL = (
+    os.environ.get("HERMES_LAYER_MANAGED_AI_DEFAULT_MODEL", _HERMES_LAYER_MANAGED_AI_FALLBACK_MODEL).strip()
+    or _HERMES_LAYER_MANAGED_AI_FALLBACK_MODEL
+)
+
+
 _SUPPORTED_PROVIDER_SETUPS = {
     "hermes-layer-managed": {
         "label": "Managed AI credits",
         "env_var": "HERMES_LAYER_WORKSPACE_TOKEN",
-        "default_model": os.environ.get("HERMES_LAYER_MANAGED_AI_DEFAULT_MODEL", "openrouter/auto"),
+        "default_model": _HERMES_LAYER_MANAGED_AI_DEFAULT_MODEL,
         "default_base_url": os.environ.get("HERMES_LAYER_MANAGED_AI_BASE_URL", ""),
         "requires_base_url": False,
         "key_optional": True,
-        "models": [
-            {"id": os.environ.get("HERMES_LAYER_MANAGED_AI_DEFAULT_MODEL", "openrouter/auto"), "label": os.environ.get("HERMES_LAYER_MANAGED_AI_DEFAULT_MODEL", "openrouter/auto")},
-            {"id": "openrouter/auto", "label": "openrouter/auto"},
-        ],
+        "models": [{"id": _HERMES_LAYER_MANAGED_AI_DEFAULT_MODEL, "label": _HERMES_LAYER_MANAGED_AI_DEFAULT_MODEL}],
         "category": "managed",
         "quick": True,
         "managed": True,
@@ -231,7 +235,7 @@ def _managed_ai_base_url() -> str:
 
 
 def _managed_ai_default_model() -> str:
-    return os.environ.get("HERMES_LAYER_MANAGED_AI_DEFAULT_MODEL", "openrouter/auto").strip() or "openrouter/auto"
+    return os.environ.get("HERMES_LAYER_MANAGED_AI_DEFAULT_MODEL", _HERMES_LAYER_MANAGED_AI_FALLBACK_MODEL).strip() or _HERMES_LAYER_MANAGED_AI_FALLBACK_MODEL
 
 
 def _is_managed_ai_config(provider: str, base_url: str) -> bool:

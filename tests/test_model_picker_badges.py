@@ -110,6 +110,32 @@ def test_configured_model_group_label_has_i18n_key():
     )
 
 
+def test_hosted_managed_ai_catalog_uses_public_hermes_layer_model(monkeypatch):
+    base_url = "http://localhost:9/api/internal/workspaces/inst_test/managed-ai/v1"
+    monkeypatch.setenv("HERMES_LAYER_HOSTED_ONBOARDING", "1")
+    monkeypatch.setenv("HERMES_LAYER_MANAGED_AI_BASE_URL", base_url)
+    monkeypatch.setenv("HERMES_LAYER_MANAGED_AI_DEFAULT_MODEL", "hermes-layer/auto")
+    monkeypatch.setattr(config, "_load_models_cache_from_disk", lambda: None)
+
+    result = _models_with_cfg(
+        model_cfg={
+            "provider": "custom",
+            "default": "openrouter/auto",
+            "base_url": base_url,
+            "api_key": "workspace-token",
+        },
+    )
+
+    assert result["default_model"] == "hermes-layer/auto"
+    assert result["configured_model_badges"].get("hermes-layer/auto", {}).get("role") == "primary"
+    assert "openrouter/auto" not in str(result)
+    assert any(
+        model.get("id") == "hermes-layer/auto"
+        for group in result["groups"]
+        for model in group.get("models", [])
+    )
+
+
 def test_get_available_models_cache_preserves_configured_model_badges(tmp_path, monkeypatch):
     cache_path = tmp_path / "models_cache.json"
     old_cfg = config.cfg

@@ -90,7 +90,7 @@ def test_account_menu_is_avatar_based_not_a_brand_overlay_button():
     assert "function renderAccountLoadingMenu(root, message)" in HERMES_LAYER_JS
     assert "renderAccountLoadingMenu(root);" in HERMES_LAYER_JS
     assert "Loading account..." in HERMES_LAYER_JS
-    assert 'aria-label="Account menu"' in HERMES_LAYER_JS
+    assert "hl('hl_account_menu', 'Account menu')" in HERMES_LAYER_JS
     assert 'data-hl-account-menu hidden role="menu"' in HERMES_LAYER_JS
     assert 'data-hl-account-button' in HERMES_LAYER_JS
     assert 'data-hl-account-logout' in HERMES_LAYER_JS

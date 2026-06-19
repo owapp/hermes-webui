@@ -2842,10 +2842,37 @@ def _current_webui_version() -> str | None:
 # guarantees that even if a future release accidentally reuses the same
 # WebUI version string (or a debug build doesn't have a version), a structural
 # change still invalidates the cache.
-_MODELS_CACHE_SCHEMA_VERSION = 3
+_MODELS_CACHE_SCHEMA_VERSION = 4
 
 
 _models_cache_path = STATE_DIR / "models_cache.json"
+
+
+_HERMES_LAYER_MANAGED_AI_FALLBACK_MODEL = "hermes-layer/auto"
+
+
+def _truthy_env_value(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _hermes_layer_managed_ai_default_model() -> str:
+    return (
+        os.environ.get("HERMES_LAYER_MANAGED_AI_DEFAULT_MODEL", _HERMES_LAYER_MANAGED_AI_FALLBACK_MODEL).strip()
+        or _HERMES_LAYER_MANAGED_AI_FALLBACK_MODEL
+    )
+
+
+def _hermes_layer_managed_ai_base_url() -> str:
+    return _normalize_base_url_for_match(os.environ.get("HERMES_LAYER_MANAGED_AI_BASE_URL", ""))
+
+
+def _is_hermes_layer_managed_ai_config(provider: object, base_url: object) -> bool:
+    return (
+        _truthy_env_value("HERMES_LAYER_HOSTED_ONBOARDING")
+        and str(provider or "").strip().lower() == "custom"
+        and bool(_hermes_layer_managed_ai_base_url())
+        and _normalize_base_url_for_match(base_url) == _hermes_layer_managed_ai_base_url()
+    )
 
 
 def _get_auth_store_path() -> Path:
@@ -3602,6 +3629,8 @@ def get_available_models() -> dict:
                 cfg,
                 base_url=cfg_base_url,
             )
+        if _is_hermes_layer_managed_ai_config(active_provider, cfg_base_url):
+            default_model = _hermes_layer_managed_ai_default_model()
 
         # 2. Read auth store (active_provider fallback + credential_pool inspection)
         auth_store = {}
