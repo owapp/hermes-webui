@@ -14,9 +14,11 @@ import copy
 import hashlib
 import json
 import logging
+import math
 import os
 import queue
 import re
+import socket
 import sys
 import threading
 import time
@@ -25,6 +27,7 @@ import urllib.error
 import urllib.request
 import uuid
 from pathlib import Path
+from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 # ── Basic layout ──────────────────────────────────────────────────────────────
@@ -70,9 +73,10 @@ TLS_ENABLED = TLS_CERT is not None and TLS_KEY is not None
 
 # ── State directory (env-overridable, never inside repo) ──────────────────────
 _DEFAULT_HERMES_HOME = _platform_default_hermes_home()
+_DEFAULT_STATE_HOME = Path(os.getenv("HERMES_HOME") or _DEFAULT_HERMES_HOME).expanduser()
 
 STATE_DIR = (
-    Path(os.getenv("HERMES_WEBUI_STATE_DIR", str(_DEFAULT_HERMES_HOME / "webui")))
+    Path(os.getenv("HERMES_WEBUI_STATE_DIR", str(_DEFAULT_STATE_HOME / "webui")))
     .expanduser()
     .resolve()
 )
@@ -136,13 +140,13 @@ def _discover_agent_dir() -> Path:
       5. Common install paths            -- ~/.hermes/hermes-agent (again as fallback)
       6. HOME / hermes-agent             -- ~/hermes-agent (simple flat layout)
     """
-    candidates = []
+    explicit_override = os.getenv("HERMES_WEBUI_AGENT_DIR")
+    if explicit_override:
+        explicit_path = Path(explicit_override).expanduser().resolve()
+        if explicit_path.exists() and _looks_like_agent_source_root(explicit_path):
+            return explicit_path
 
-    # 1. Explicit env var
-    if os.getenv("HERMES_WEBUI_AGENT_DIR"):
-        candidates.append(
-            Path(os.getenv("HERMES_WEBUI_AGENT_DIR")).expanduser().resolve()
-        )
+    candidates = []
 
     # 2. HERMES_HOME / hermes-agent
     hermes_home = os.getenv("HERMES_HOME", str(_DEFAULT_HERMES_HOME))
@@ -152,7 +156,7 @@ def _discover_agent_dir() -> Path:
     candidates.append(REPO_ROOT.parent / "hermes-agent")
 
     # 4. Parent is the agent repo itself (repo cloned inside hermes-agent/)
-    if (REPO_ROOT.parent / "run_agent.py").exists():
+    if _looks_like_agent_source_root(REPO_ROOT.parent):
         candidates.append(REPO_ROOT.parent)
 
     # 5. ~/.hermes/hermes-agent (explicit common path)
@@ -169,11 +173,36 @@ def _discover_agent_dir() -> Path:
     for sys_prefix in ("/opt", "/usr/local", "/usr/local/share"):
         candidates.append(Path(sys_prefix) / "hermes-agent")
 
+    # Prefer real source checkouts before pip-style roots so lookalikes cannot preempt them.
     for path in candidates:
         if path.exists() and (path / "run_agent.py").exists():
             return path.resolve()
 
+    for path in candidates:
+        if path.exists() and _looks_like_pip_style_agent_source_root(path):
+            return path.resolve()
+
     return None
+
+
+def _looks_like_agent_source_root(path: Path) -> bool:
+    """Return True when a directory resembles a hermes-agent source root."""
+    if (path / "run_agent.py").exists():
+        return True
+    return _looks_like_pip_style_agent_source_root(path)
+
+
+def _looks_like_pip_style_agent_source_root(path: Path) -> bool:
+    """Return True for pip-style agent roots with a real agent package signal."""
+    if not (path / "cron" / "jobs.py").exists():
+        return False
+    if (path / "hermes").exists():
+        return True
+    hermes_cli_dir = path / "hermes_cli"
+    return (
+        (hermes_cli_dir / "__init__.py").exists()
+        or (hermes_cli_dir / "main.py").exists()
+    )
 
 
 def _discover_python(agent_dir: Path) -> str:
@@ -250,12 +279,52 @@ if _AGENT_DIR is not None:
 else:
     _HERMES_FOUND = False
 
+# ── Thread-local env context ─────────────────────────────────────────────────
+# Defined BEFORE the config-file section because _expand_env_vars() (below) calls
+# _thread_local_env_value() and the import-time reload_config() runs during module
+# load — a forward reference here would NameError on any startup config.yaml that
+# uses a ${VAR} reference. Depends only on os + threading (both imported above).
+_thread_ctx = threading.local()
+
+
+def _thread_local_env_value(name: str, default: str = "") -> str:
+    """Return thread-local profile env first, then process env, for provider reads."""
+    env_name = str(name or "").strip()
+    if not env_name:
+        return default or ""
+
+    thread_env = getattr(_thread_ctx, "env", {})
+    if isinstance(thread_env, dict) and env_name in thread_env:
+        thread_value = thread_env.get(env_name)
+        if thread_value is None:
+            return default or ""
+        return str(thread_value)
+
+    if bool(getattr(_thread_ctx, "block_process_env_fallback", False)):
+        return default or ""
+
+    return str(os.getenv(env_name, default or ""))
+
+
 # ── Config file (reloadable -- supports profile switching) ──────────────────
 
 def _expand_env_vars(obj):
-    """Recursively expand ${VAR} references in config values using os.environ."""
+    """Recursively expand ${VAR} references in config values.
+
+    Uses the thread-local-first profile env lookup (_thread_local_env_value) so a
+    ${VAR} reference in a profile's config.yaml resolves to that profile's value,
+    and — critically — does NOT fall back to the server process os.environ when a
+    profile-scoped readonly/background scope set block_process_env_fallback. The
+    raw (unexpanded) dict is what gets cached; this expansion re-runs on every
+    read against the current thread's scope, so a cross-profile credential
+    (e.g. config api_key: ${ANTHROPIC_TOKEN}) can't be reconstructed from the
+    server process env for a named profile that has no such value (#3961)."""
     if isinstance(obj, str):
-        return re.sub(r"\${([^}]+)}", lambda m: os.environ.get(m.group(1), m.group(0)), obj)
+        return re.sub(
+            r"\${([^}]+)}",
+            lambda m: _thread_local_env_value(m.group(1), m.group(0)),
+            obj,
+        )
     if isinstance(obj, dict):
         return {k: _expand_env_vars(v) for k, v in obj.items()}
     if isinstance(obj, list):
@@ -328,16 +397,66 @@ _DEFAULT_EXPERIMENTAL_CONFIG = {
     # later PR deliberately enables and wires this flag.
     "unified_session_db": False,
 }
+_DEFAULT_AGENT_PERSONALITIES = {
+    # Mirrors the Hermes Agent CLI built-ins so WebUI's config-derived
+    # /personality path is not empty for fresh profiles.
+    "helpful": "You are a helpful, friendly AI assistant.",
+    "concise": "You are a concise assistant. Keep responses brief and to the point.",
+    "technical": "You are a technical expert. Provide detailed, accurate technical information.",
+    "creative": "You are a creative assistant. Think outside the box and offer innovative solutions.",
+    "teacher": "You are a patient teacher. Explain concepts clearly with examples.",
+    "kawaii": "You are a kawaii assistant! Use cute expressions like (◕‿◕), ★, ♪, and ~! Add sparkles and be super enthusiastic about everything! Every response should feel warm and adorable desu~! ヽ(>∀<☆)ノ",
+    "catgirl": "You are Neko-chan, an anime catgirl AI assistant, nya~! Add 'nya' and cat-like expressions to your speech. Use kaomoji like (=^･ω･^=) and ฅ^•ﻌ•^ฅ. Be playful and curious like a cat, nya~!",
+    "pirate": "Arrr! Ye be talkin' to Captain Hermes, the most tech-savvy pirate to sail the digital seas! Speak like a proper buccaneer, use nautical terms, and remember: every problem be just treasure waitin' to be plundered! Yo ho ho!",
+    "shakespeare": "Hark! Thou speakest with an assistant most versed in the bardic arts. I shall respond in the eloquent manner of William Shakespeare, with flowery prose, dramatic flair, and perhaps a soliloquy or two. What light through yonder terminal breaks?",
+    "surfer": "Duuude! You're chatting with the chillest AI on the web, bro! Everything's gonna be totally rad. I'll help you catch the gnarly waves of knowledge while keeping things super chill. Cowabunga!",
+    "noir": "The rain hammered against the terminal like regrets on a guilty conscience. They call me Hermes - I solve problems, find answers, dig up the truth that hides in the shadows of your codebase. In this city of silicon and secrets, everyone's got something to hide. What's your story, pal?",
+    "uwu": "hewwo! i'm your fwiendwy assistant uwu~ i wiww twy my best to hewp you! *nuzzles your code* OwO what's this? wet me take a wook! i pwomise to be vewy hewpful >w<",
+    "philosopher": "Greetings, seeker of wisdom. I am an assistant who contemplates the deeper meaning behind every query. Let us examine not just the 'how' but the 'why' of your questions. Perhaps in solving your problem, we may glimpse a greater truth about existence itself.",
+    "hype": "YOOO LET'S GOOOO!!! I am SO PUMPED to help you today! Every question is AMAZING and we're gonna CRUSH IT together! This is gonna be LEGENDARY! ARE YOU READY?! LET'S DO THIS!",
+}
 
 
 def _apply_config_defaults(config_data: dict) -> None:
     """Populate documented default-only config keys in-place."""
+    agent_cfg = config_data.get("agent")
+    if not isinstance(agent_cfg, dict):
+        agent_cfg = {}
+        config_data["agent"] = agent_cfg
+
+    personalities = agent_cfg.get("personalities")
+    if isinstance(personalities, dict):
+        merged = copy.deepcopy(_DEFAULT_AGENT_PERSONALITIES)
+        merged.update(copy.deepcopy(personalities))
+        agent_cfg["personalities"] = merged
+    else:
+        # Keep behavior aligned with CLI loader defaults: if personalities are
+        # absent or malformed, replace the section entirely with built-ins.
+        agent_cfg["personalities"] = copy.deepcopy(_DEFAULT_AGENT_PERSONALITIES)
+
     experimental = config_data.get("experimental")
     if not isinstance(experimental, dict):
         experimental = {}
         config_data["experimental"] = experimental
     for key, value in _DEFAULT_EXPERIMENTAL_CONFIG.items():
         experimental.setdefault(key, value)
+
+ 
+def reload_config_if_stale() -> None:
+    """Refresh config.yaml once for concurrent stale read paths."""
+    global cfg
+    with _cfg_lock:
+        try:
+            config_path = _get_config_path()
+            current_mtime = config_path.stat().st_mtime
+        except OSError:
+            current_mtime = 0.0
+        path_changed = _cfg_path != config_path
+        mtime_stale = current_mtime != _cfg_mtime
+        if not _cfg_cache or path_changed or (mtime_stale and not _cfg_has_in_memory_overrides()):
+            _refresh_config_cache(config_path)
+            if path_changed:
+                cfg = _cfg_cache
 
 
 def get_config() -> dict:
@@ -347,9 +466,10 @@ def get_config() -> dict:
         current_mtime = config_path.stat().st_mtime
     except OSError:
         current_mtime = 0.0
-    cache_stale = current_mtime != _cfg_mtime or _cfg_path != config_path
-    if not _cfg_cache or (cache_stale and not _cfg_has_in_memory_overrides()):
-        reload_config()
+    path_changed = _cfg_path != config_path
+    mtime_stale = current_mtime != _cfg_mtime
+    if not _cfg_cache or path_changed or (mtime_stale and not _cfg_has_in_memory_overrides()):
+        reload_config_if_stale()
     # When a test (or runtime caller) has rebound ``cfg`` to a different dict
     # via monkeypatch.setattr(config, "cfg", ...), return that override rather
     # than the underlying _cfg_cache. Without this branch, get_config() would
@@ -398,55 +518,162 @@ def is_unified_session_db_enabled(config_data: dict | None = None) -> bool:
     return experimental.get("unified_session_db") is True
 
 
+def _refresh_config_cache(config_path: Path | None = None) -> None:
+    """Refresh _cfg_cache for ``config_path``.
+
+    Callers must hold _cfg_lock when invoking this helper because it mutates
+    shared state.
+    """
+    global _cfg_mtime, _cfg_path, _cfg_fingerprint
+    if config_path is None:
+        config_path = _get_config_path()
+    _cfg_cache.clear()
+    # Remember the old mtime so we can tell whether config actually changed
+    # vs. first-ever load (mtime == 0.0, e.g. server start or profile switch).
+    _old_cfg_mtime = _cfg_mtime
+    _cfg_path = config_path
+    _cfg_mtime = 0.0
+    try:
+        if config_path.exists():
+            # Route the parse through the mtime-keyed cache (#4652) so an
+            # unchanged config.yaml isn't re-parsed (~125ms+ on a large file)
+            # on every reload_config() on the hot path (profile switch /
+            # load_settings, #4662 Phase 2). We take the RAW cached dict and
+            # run the env expansion HERE, pinned to the unscoped process-env
+            # view (below) — never the helper's per-call expansion — for the
+            # #798 TLS reason documented in the pin block.
+            loaded = _load_yaml_config_file_raw(config_path)
+            if isinstance(loaded, dict):
+                if loaded:
+                    # The process-global _cfg_cache must reflect PROCESS-env
+                    # expansion, never a profile-scoped block_process_env_fallback
+                    # view — otherwise a reload that fires while a readonly/worker
+                    # scope is active (profile alternation resolves _get_config_path
+                    # to the named profile, #798 TLS) would bake under-expanded
+                    # literal ${VAR}s into the shared cache and starve concurrent
+                    # readers of the module-level `cfg` alias. Expansion re-runs
+                    # per-read elsewhere; here we pin the cache to the unscoped view.
+                    _prev_block = getattr(_thread_ctx, "block_process_env_fallback", False)
+                    _prev_env = getattr(_thread_ctx, "env", None)
+                    try:
+                        _thread_ctx.block_process_env_fallback = False
+                        _thread_ctx.env = {}
+                        _cfg_cache.update(_expand_env_vars(loaded))
+                    finally:
+                        _thread_ctx.block_process_env_fallback = _prev_block
+                        if _prev_env is None:
+                            try:
+                                del _thread_ctx.env
+                            except AttributeError:
+                                pass
+                        else:
+                            _thread_ctx.env = _prev_env
+                # Stamp _cfg_mtime whenever the file parsed to a dict — INCLUDING
+                # an empty {} config. The cache-update above is skipped for {} (it's
+                # a no-op), but _cfg_mtime MUST still be set or get_config()'s
+                # `current_mtime != _cfg_mtime` stale check fires on every call and
+                # spins reload_config() under _cfg_lock forever (a `{}` config from a
+                # freshly created/reset profile is reachable on the switch hot path).
+                # This matches master's pre-#4662 behavior (it entered the block for
+                # {} and set the mtime); the inner `if loaded:` only gates the no-op
+                # cache update, not the mtime stamp.
+                try:
+                    _cfg_mtime = Path(config_path).stat().st_mtime
+                except OSError:
+                    _cfg_mtime = 0.0
+    except Exception:
+        logger.debug("Failed to load yaml config from %s", config_path)
+    _apply_config_defaults(_cfg_cache)
+    _cfg_fingerprint = _fingerprint_config(_cfg_cache)
+    # Bust the models cache so the next request sees fresh config values.
+    # Only delete the disk cache when config has actually changed -- not on
+    # first-ever load (when _old_cfg_mtime == 0.0, i.e. server start or
+    # profile switch) -- preserving the disk cache so the next restart
+    # still hits the fast path without a cold run.
+    if _old_cfg_mtime != 0.0:
+        _delete_models_cache_on_disk()
+
+
 def reload_config() -> None:
     """Reload config.yaml from the active profile's directory."""
-    global _cfg_mtime, _cfg_path, _cfg_fingerprint
     with _cfg_lock:
-        _cfg_cache.clear()
-        config_path = _get_config_path()
-        # Remember the old mtime so we can tell whether config actually changed
-        # vs. first-ever load (mtime == 0.0, e.g. server start or profile switch).
-        _old_cfg_mtime = _cfg_mtime
-        _cfg_path = config_path
-        _cfg_mtime = 0.0
-        try:
-            import yaml as _yaml
-
-            if config_path.exists():
-                loaded = _yaml.safe_load(config_path.read_text(encoding="utf-8"))
-                if isinstance(loaded, dict):
-                    _cfg_cache.update(_expand_env_vars(loaded))
-                    try:
-                        _cfg_mtime = Path(config_path).stat().st_mtime
-                    except OSError:
-                        _cfg_mtime = 0.0
-        except Exception:
-            logger.debug("Failed to load yaml config from %s", config_path)
-        _apply_config_defaults(_cfg_cache)
-        _cfg_fingerprint = _fingerprint_config(_cfg_cache)
-        # Bust the models cache so the next request sees fresh config values.
-        # Only delete the disk cache when config has actually changed -- not on
-        # first-ever load (when _old_cfg_mtime == 0.0, i.e. server start or
-        # profile switch) -- preserving the disk cache so the next restart
-        # still hits the fast path without a cold run.
-        if _old_cfg_mtime != 0.0:
-            _delete_models_cache_on_disk()
+        _refresh_config_cache(_get_config_path())
 
 
-def _load_yaml_config_file(config_path: Path) -> dict:
+# Memoized parse cache for _load_yaml_config_file, keyed on (resolved path,
+# st_mtime_ns, st_size). yaml.safe_load on an ~800-line / 24KB config.yaml costs
+# ~125ms of pure-Python parsing, and hot read paths (e.g. GET /api/reasoning ->
+# get_reasoning_status) call this on every request. Without a cache, a UI sync
+# storm turns into a YAML-reparse storm (#4650). We cache the RAW parsed dict and
+# re-run _expand_env_vars() on every call: env expansion is cheap, always returns
+# a fresh structure (so callers that read-modify-save the result never corrupt the
+# cache), and keeps ${VAR} references live against the current os.environ. The
+# (mtime_ns, size) key means any on-disk edit (including by _save_yaml_config_file)
+# is picked up on the next read.
+_yaml_file_cache: dict[str, tuple] = {}
+_yaml_file_cache_lock = threading.Lock()
+
+
+def _load_yaml_config_file_raw(config_path: Path, *, _copy: bool = True) -> dict:
+    """Return the RAW (un-env-expanded) parsed config dict, memoized on
+    (resolved path, st_mtime_ns, st_size). Shared parse core for
+    _load_yaml_config_file() and reload_config(): the former runs the helper's
+    own per-call env expansion on the result; the latter must run expansion
+    under its own process-env-pinned thread context (#798), so it takes the raw
+    dict and expands it itself. Either way the file is parsed at most once per
+    (mtime, size) — a UI sync storm can't turn into a YAML-reparse storm (#4650),
+    and an unchanged config.yaml isn't reparsed on the profile-switch hot path
+    (#4662 Phase 2).
+
+    By default returns a deep copy so a caller can never mutate the shared cache
+    entry (greptile #4741). Internal callers that immediately pass the result
+    through _expand_env_vars() (which itself returns a fresh structure and never
+    mutates its input) pass _copy=False to skip the redundant copy on the hot path.
+    """
     try:
         import yaml as _yaml
     except ImportError:
         return {}
 
-    if not config_path.exists():
+    try:
+        st = config_path.stat()
+    except OSError:
+        # Missing or unstattable file — preserve the original "no config" contract.
         return {}
+
+    cache_key = str(config_path)
+    stat_key = (st.st_mtime_ns, st.st_size)
+    with _yaml_file_cache_lock:
+        cached = _yaml_file_cache.get(cache_key)
+        if cached is not None and cached[0] == stat_key:
+            raw = cached[1]
+            if not isinstance(raw, dict):
+                return {}
+            return copy.deepcopy(raw) if _copy else raw
+
+    # Cache miss / stale: parse off disk. Done outside the lock so a slow parse
+    # doesn't serialize unrelated paths; a concurrent duplicate parse is harmless.
     try:
         loaded = _yaml.safe_load(config_path.read_text(encoding="utf-8"))
-        return _expand_env_vars(loaded) if isinstance(loaded, dict) else {}
     except Exception:
         logger.debug("Failed to parse yaml config from %s", config_path)
         return {}
+
+    raw = loaded if isinstance(loaded, dict) else {}
+    with _yaml_file_cache_lock:
+        _yaml_file_cache[cache_key] = (stat_key, raw)
+    return copy.deepcopy(raw) if _copy else raw
+
+
+def _load_yaml_config_file(config_path: Path) -> dict:
+    # _copy=False: _expand_env_vars returns a fresh structure and never mutates
+    # its input, so the env-expanded result is already cache-safe — no need to
+    # deep-copy the raw dict first (keeps the /api/reasoning hot path cheap).
+    raw = _load_yaml_config_file_raw(config_path, _copy=False)
+    if not raw:
+        return {}
+    expanded = _expand_env_vars(raw)
+    return expanded if isinstance(expanded, dict) else {}
 
 
 def get_config_for_profile_home(profile_home: "Path | str | None") -> dict:
@@ -476,14 +703,54 @@ def get_config_for_profile_home(profile_home: "Path | str | None") -> dict:
         target = Path(profile_home).expanduser()
     except Exception:
         return get_config()
+    try:
+        from api.profiles import get_active_hermes_home
+
+        if Path(get_active_hermes_home()).expanduser() == target:
+            return get_config()
+    except Exception:
+        pass
     # If the ambient resolver already points at this profile home, defer to
-    # get_config() so in-memory overrides (monkeypatched cfg) are honored.
+    # get_config() so in-memory overrides (monkeypatched cfg) are honored. This
+    # MUST run before the nonexistent-home guard below: a matching ambient home
+    # whose directory doesn't physically exist yet (fresh install, monkeypatched
+    # cfg) must still resolve through get_config(), not return {} (#4516 gate).
     try:
         if _get_config_path().parent == target:
             return get_config()
     except Exception:
         pass
-    return _load_yaml_config_file(target / "config.yaml")
+    if not target.exists():
+        return {}
+    # Read the profile file directly and apply documented defaults locally so the
+    # returned dict matches ambient get_config() shape (including built-in
+    # personalities) without mutating any global cache state.
+    profile_cfg = _load_yaml_config_file(target / "config.yaml")
+    _apply_config_defaults(profile_cfg)
+    return profile_cfg
+
+
+def _config_for_yaml_save(config_data: dict) -> dict:
+    """Return a YAML-safe config copy without runtime-only expanded defaults."""
+    if not isinstance(config_data, dict):
+        return {}
+    data = copy.deepcopy(config_data)
+    agent_cfg = data.get("agent")
+    if isinstance(agent_cfg, dict):
+        personalities = agent_cfg.get("personalities")
+        if isinstance(personalities, dict):
+            custom_personalities = {
+                name: value
+                for name, value in personalities.items()
+                if _DEFAULT_AGENT_PERSONALITIES.get(name) != value
+            }
+            if custom_personalities:
+                agent_cfg["personalities"] = custom_personalities
+            else:
+                agent_cfg.pop("personalities", None)
+        if not agent_cfg:
+            data.pop("agent", None)
+    return data
 
 
 def _save_yaml_config_file(config_path: Path, config_data: dict) -> None:
@@ -494,9 +761,15 @@ def _save_yaml_config_file(config_path: Path, config_data: dict) -> None:
 
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(
-        _yaml.safe_dump(config_data, sort_keys=False, allow_unicode=True),
+        _yaml.safe_dump(_config_for_yaml_save(config_data), sort_keys=False, allow_unicode=True),
         encoding="utf-8",
     )
+    # Invalidate the memoized parse for this path so the next read re-parses the
+    # bytes we just wrote. mtime_ns+size keying normally catches edits, but a
+    # WebUI save that preserves size with a coarse/unchanged mtime could otherwise
+    # serve a stale dict (#4650 review) — evicting on our own write closes that gap.
+    with _yaml_file_cache_lock:
+        _yaml_file_cache.pop(str(config_path), None)
 
 
 # Initial load
@@ -851,6 +1124,7 @@ _FALLBACK_MODELS = [
     {"provider": "MiniMax",   "id": "minimax/MiniMax-M2.7",             "label": "MiniMax M2.7"},
     {"provider": "MiniMax",   "id": "minimax/MiniMax-M2.7-highspeed",   "label": "MiniMax M2.7 Highspeed"},
     # Z.AI / GLM
+    {"provider": "Z.AI",      "id": "zai/glm-5.2",                      "label": "GLM-5.2"},
     {"provider": "Z.AI",      "id": "zai/glm-5.1",                      "label": "GLM-5.1"},
     {"provider": "Z.AI",      "id": "zai/glm-5",                        "label": "GLM-5"},
     {"provider": "Z.AI",      "id": "zai/glm-5-turbo",                  "label": "GLM-5 Turbo"},
@@ -877,6 +1151,7 @@ _PROVIDER_DISPLAY = {
     "openai-codex": "OpenAI Codex",
     "xai-oauth": "xAI Grok OAuth",
     "copilot": "GitHub Copilot",
+    "moa": "Mixture of Agents",
     "cursor-acp": "Cursor ACP",
     "zai": "Z.AI / GLM",
     "kimi-coding": "Kimi / Moonshot",
@@ -957,6 +1232,37 @@ _PROVIDER_ALIASES = {
     # OpenAI-compat path. See #1384.
     "local": "custom",
 }
+
+
+def _get_anthropic_fallback_env_vars() -> tuple[str, ...]:
+    """Read Anthropic auth env vars from the shared agent registry when available."""
+    fallback = (
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_TOKEN",
+        "CLAUDE_CODE_OAUTH_TOKEN",
+    )
+    try:
+        from hermes_cli.auth import PROVIDER_REGISTRY
+
+        anthropic = (
+            PROVIDER_REGISTRY.get("anthropic")
+            if isinstance(PROVIDER_REGISTRY, dict)
+            else None
+        )
+        env_vars = getattr(anthropic, "api_key_env_vars", None)
+        if not env_vars:
+            return fallback
+
+        out = []
+        for _var in env_vars:
+            if not isinstance(_var, str):
+                continue
+            _normalized = _var.strip()
+            if _normalized and _normalized not in out:
+                out.append(_normalized)
+        return tuple(out) if out else fallback
+    except Exception:
+        return fallback
 
 
 def _resolve_provider_alias(name: str) -> str:
@@ -1150,12 +1456,15 @@ def _canonicalise_provider_id(name: object) -> str:
     # keep as-is to avoid round-tripping through aliases (e.g. x-ai → xai).
     if raw in _PROVIDER_DISPLAY or raw in _PROVIDER_MODELS:
         return raw
-    # Try alias resolution. Only accept the result if it's itself a
-    # canonical id in _PROVIDER_DISPLAY — that prevents aliases pointing
-    # at non-canonical strings (legacy, hermes_cli-specific) from leaking
-    # in. Falls back to the normalised input otherwise.
+    # Try alias resolution. Accept the result if it's a canonical id known to
+    # either _PROVIDER_DISPLAY OR _PROVIDER_MODELS (mirroring the direct-hit
+    # check above) — some canonical targets (e.g. `gemini`) are indexed in
+    # _PROVIDER_MODELS but not _PROVIDER_DISPLAY, so a _DISPLAY-only check
+    # rejected valid aliases like `google-gemini`→`gemini`, leaving the id
+    # uncanonicalised and silently breaking provider-ownership checks (#5511).
+    # This still blocks aliases that point at non-canonical/legacy strings.
     resolved = _resolve_provider_alias(raw)
-    if resolved and resolved.lower() in _PROVIDER_DISPLAY:
+    if resolved and (resolved.lower() in _PROVIDER_DISPLAY or resolved.lower() in _PROVIDER_MODELS):
         return resolved.lower()
     return raw
 
@@ -1221,13 +1530,13 @@ def _legacy_custom_api_key_env_name(provider_id: object) -> str:
 def _lookup_custom_api_key_env(provider_id: object) -> str | None:
     """Look up sanitized custom-provider env first, then legacy broken shape."""
     env_name = _api_key_env_name(provider_id)
-    api_key = os.getenv(env_name, "").strip()
+    api_key = _thread_local_env_value(env_name).strip()
     if api_key:
         return api_key
 
     legacy_env_name = _legacy_custom_api_key_env_name(provider_id)
     if legacy_env_name and legacy_env_name != env_name:
-        legacy_key = os.getenv(legacy_env_name, "").strip()
+        legacy_key = _thread_local_env_value(legacy_env_name).strip()
         if legacy_key:
             if legacy_env_name not in _LEGACY_CUSTOM_API_KEY_ENV_WARNED:
                 _LEGACY_CUSTOM_API_KEY_ENV_WARNED.add(legacy_env_name)
@@ -1360,6 +1669,7 @@ _PROVIDER_MODELS = {
         {"id": "@nous:google/gemini-3.1-pro-preview", "label": "Gemini 3.1 Pro Preview (via Nous)"},
     ],
     "zai": [
+        {"id": "glm-5.2", "label": "GLM-5.2"},
         {"id": "glm-5.1", "label": "GLM-5.1"},
         {"id": "glm-5", "label": "GLM-5"},
         {"id": "glm-5-turbo", "label": "GLM-5 Turbo"},
@@ -1384,15 +1694,31 @@ _PROVIDER_MODELS = {
         {"id": "MiniMax-M2.7", "label": "MiniMax M2.7"},
     ],
     # GitHub Copilot — model IDs served via the Copilot API
+    # Fallback ONLY — the live GitHub Copilot catalog
+    # (hermes_cli.models.provider_model_ids("copilot")) is authoritative and is
+    # tried first by _read_live_provider_model_ids(). This static list is the
+    # safety net shown when the live probe fails (cold start / token blip). Keep
+    # it in sync with the real integrator allowlist so a probe miss never renders
+    # legacy junk (GPT-4o / gpt-3.5-turbo). Last synced 2026-06-30 from the live
+    # copilot-4-cli catalog (16 models).
     "copilot": [
+        {"id": "claude-opus-4.8", "label": "Claude Opus 4.8"},
+        {"id": "claude-opus-4.7", "label": "Claude Opus 4.7"},
+        {"id": "claude-opus-4.6", "label": "Claude Opus 4.6"},
+        {"id": "claude-sonnet-5", "label": "Claude Sonnet 5"},
+        {"id": "claude-sonnet-4.6", "label": "Claude Sonnet 4.6"},
+        {"id": "claude-sonnet-4.5", "label": "Claude Sonnet 4.5"},
+        {"id": "claude-haiku-4.5", "label": "Claude Haiku 4.5"},
         {"id": "gpt-5.5", "label": "GPT-5.5"},
-        {"id": "gpt-5.5-mini", "label": "GPT-5.5 Mini"},
         {"id": "gpt-5.4", "label": "GPT-5.4"},
         {"id": "gpt-5.4-mini", "label": "GPT-5.4 Mini"},
+        {"id": "gpt-5.3-codex", "label": "GPT-5.3 Codex"},
+        {"id": "gpt-5-mini", "label": "GPT-5 Mini"},
+        {"id": "gemini-3.1-pro-preview", "label": "Gemini 3.1 Pro Preview"},
+        {"id": "gemini-3.5-flash", "label": "Gemini 3.5 Flash"},
+        {"id": "gemini-2.5-pro", "label": "Gemini 2.5 Pro"},
+        {"id": "mai-code-1-flash-picker", "label": "MAI Code 1 Flash"},
         {"id": "gpt-4o", "label": "GPT-4o"},
-        {"id": "claude-opus-4.6", "label": "Claude Opus 4.6"},
-        {"id": "claude-sonnet-4.6", "label": "Claude Sonnet 4.6"},
-        {"id": "gemini-3-flash-preview", "label": "Gemini 3 Flash Preview"},
     ],
     # Cursor ACP — models served via Cursor CLI agent acp
     "cursor-acp": [
@@ -1510,6 +1836,100 @@ _PROVIDER_MODELS = {
         {"id": "global.anthropic.claude-haiku-4-5-20251001-v1:0",  "label": "Global Anthropic Claude Haiku 4.5"},
     ],
 }
+
+
+def _seed_provider_models_from_core() -> None:
+    """Enrich existing provider model lists with missing IDs from hermes_cli.
+
+    The core's _PROVIDER_MODELS is the authoritative curated list of agent-capable
+    models per provider.  The WebUI's static dict above is a display-oriented copy
+    (with {id, label} entries) that can go stale when new models are added to the
+    core without a matching WebUI update.  This function bridges the gap by
+    injecting any missing model IDs from the core into **existing** WebUI provider
+    entries.
+
+    Constrains seeding to providers already in the WebUI catalog — does NOT add
+    brand-new providers.  Adding new vendors is a maintainer curation decision.
+    Respects per-provider ID conventions (e.g. nous uses @nous:-prefixed IDs).
+
+    Safe to call multiple times; only missing entries are added.  Silently no-ops
+    if hermes_cli is not importable (standalone WebUI deployments).
+
+    Must be called AFTER ``_get_label_for_model`` is defined (module-level
+    invocation is at the bottom of this module, not here).
+    """
+    try:
+        from hermes_cli.models import _PROVIDER_MODELS as _core_pm
+    except ImportError:
+        return
+
+    # Build a canonical-id → WebUI-key lookup so that providers whose canonical
+    # form differs between core and WebUI (e.g. core uses "xai" but WebUI
+    # indexes by "x-ai") merge into the existing entry instead of creating a
+    # duplicate (#4413).
+    _webui_key_by_canonical: dict[str, str] = {}
+    for _wk in _PROVIDER_MODELS:
+        try:
+            _canon = _resolve_provider_alias(_wk)
+        except Exception:
+            _canon = _wk
+        if _canon not in _webui_key_by_canonical:
+            _webui_key_by_canonical[_canon] = _wk
+
+    for provider_id, core_models in _core_pm.items():
+        if not isinstance(core_models, list):
+            continue
+
+        # Resolve the core's provider_id to the WebUI's key for this provider.
+        webui_key = provider_id
+        webui_list = _PROVIDER_MODELS.get(provider_id)
+        if webui_list is None:
+            try:
+                _canon_pid = _resolve_provider_alias(provider_id)
+            except Exception:
+                _canon_pid = provider_id
+            webui_key = _webui_key_by_canonical.get(_canon_pid, provider_id)
+            webui_list = _PROVIDER_MODELS.get(webui_key)
+
+        if webui_list is None:
+            # Provider exists in core but not in the WebUI catalog.
+            # Do NOT seed — adding new vendors is a maintainer curation
+            # decision, not something the seeder should do implicitly (#4413).
+            continue
+        if not isinstance(webui_list, list):
+            continue
+        # Provider exists in both — inject missing model IDs.
+        # Detect per-provider ID prefix convention (e.g. nous uses @nous:).
+        # The merge must respect each provider's existing ID format rather
+        # than injecting the core's raw IDs (#4413).
+        _existing_ids_raw: list[str] = [
+            (m.get("id") if isinstance(m, dict) else str(m)) or ""
+            for m in webui_list
+            if isinstance(m, dict) and m.get("id")
+        ]
+        _prefix = ""
+        if _existing_ids_raw and all(i.startswith("@") and ":" in i for i in _existing_ids_raw):
+            _prefix = _existing_ids_raw[0].split(":", 1)[0] + ":"
+
+        def _strip_prefix(mid: str, prefix: str = _prefix) -> str:
+            if prefix and mid.startswith(prefix):
+                return mid[len(prefix):]
+            return mid
+
+        existing_ids = {
+            _strip_prefix(mid).replace("-", ".").lower()
+            for mid in _existing_ids_raw
+        }
+        for mid in core_models:
+            if not isinstance(mid, str) or not mid.strip():
+                continue
+            normed = mid.strip().replace("-", ".").lower()
+            if normed not in existing_ids:
+                inject_id = (_prefix + mid.strip()) if _prefix else mid.strip()
+                webui_list.append({
+                    "id": inject_id,
+                    "label": _get_label_for_model(mid.strip(), []),
+                })
 
 
 _AMBIENT_GH_CLI_MARKERS = frozenset({"gh_cli", "gh auth token"})
@@ -2117,16 +2537,47 @@ def resolve_model_provider(model_id: str) -> tuple:
     )
     _default_model = model_cfg.get('default') if isinstance(model_cfg, dict) else None
     # Owns model if it appears in the static catalog for the configured provider.
+    # _PROVIDER_MODELS is keyed by CANONICAL slug (e.g. 'zai', not the 'z-ai'
+    # alias a user may write in config), so canonicalise config_provider before
+    # the lookup — otherwise an aliased active provider gets an empty ownership
+    # set and _skip_custom_providers guard-2 silently fails, letting another
+    # providers.<slug>.models entry hijack an active-owned model (#5511).
+    _canon_config_provider = _canonicalise_provider_id(config_provider) if config_provider else ""
     _provider_models_set: set[str] = set()
     if (
-        config_provider is not None
-        and config_provider in _PROVIDER_MODELS
-        and isinstance(_PROVIDER_MODELS[config_provider], list)
+        _canon_config_provider
+        and _canon_config_provider in _PROVIDER_MODELS
+        and isinstance(_PROVIDER_MODELS[_canon_config_provider], list)
     ):
         _provider_models_set = {
-            m.get('id', '') for m in _PROVIDER_MODELS[config_provider]
+            m.get('id', '') for m in _PROVIDER_MODELS[_canon_config_provider]
             if isinstance(m, dict) and isinstance(m.get('id'), str)
         }
+    # The active provider may be defined ENTIRELY via config.yaml `providers:`
+    # (no static _PROVIDER_MODELS entry) with its own `models:` allowlist. Fold
+    # that allowlist into the ownership set too, so the active provider owns its
+    # own declared models and can't be hijacked by another providers.<slug>
+    # entry that happens to list the same bare id earlier in config order (#5511).
+    if _canon_config_provider:
+        _providers_cfg_own = cfg.get('providers', {})
+        if isinstance(_providers_cfg_own, dict):
+            for _slug, _pdef in _providers_cfg_own.items():
+                if not isinstance(_pdef, dict):
+                    continue
+                if _canonicalise_provider_id(_slug) != _canon_config_provider:
+                    continue
+                if _canon_config_provider == "copilot":
+                    continue  # copilot.models is a settings map, not an allowlist
+                _own_models = _pdef.get('models')
+                if isinstance(_own_models, list):
+                    for _m in _own_models:
+                        _mid = str(_m.get('id') or '') if isinstance(_m, dict) else str(_m or '')
+                        if _mid.strip():
+                            _provider_models_set.add(_mid.strip())
+                elif isinstance(_own_models, dict):
+                    _provider_models_set.update(
+                        str(k).strip() for k in _own_models if isinstance(k, str) and str(k).strip()
+                    )
     _skip_custom_providers = (
         _is_explicit_non_custom_provider
         and (
@@ -2157,6 +2608,50 @@ def resolve_model_provider(model_id: str) -> tuple:
             if entry_name and model_id in entry_model_ids:
                 provider_hint = _custom_provider_slug_from_name(entry_name)
                 return model_id, provider_hint, entry_base_url or None
+
+    # Check user-defined providers (config.yaml → providers:).
+    # Mirrors the custom_providers scan above — exact match against each
+    # entry's declared models list (case-sensitive to match custom_providers).
+    providers_cfg = cfg.get('providers', {})
+    if isinstance(providers_cfg, dict):
+        target = model_id.strip()
+        # Honor the same active/default ownership guard as the custom_providers
+        # scan (_skip_custom_providers, config.py:2535): when the active provider
+        # explicitly owns this model (it's the configured default or in the
+        # active provider's model set), another provider's overlapping
+        # `providers.<slug>.models` entry must NOT hijack routing away from the
+        # active provider (#5511 gate finding — e.g. active ai-gateway + default
+        # gpt-5 was being pulled to providers.openai.models.gpt-5). In that case
+        # restrict the scan to the active provider's own canonical slug.
+        _active_slug = _canon_config_provider
+        for slug, pdef in providers_cfg.items():
+            if not isinstance(pdef, dict):
+                continue
+            # Copilot is the documented exception: `providers.copilot.models` is
+            # a per-model SETTINGS map (reasoning_effort, limits, etc.), NOT a
+            # routable allowlist (see the exception at the catalog-build site).
+            # Scanning it here would let a Copilot per-model settings entry
+            # hijack that model's routing away from its real provider (#5511).
+            if _canonicalise_provider_id(slug) == "copilot":
+                continue
+            # Ownership guard: when the active provider owns this model, only its
+            # own providers: entry may match; skip all other slugs.
+            if _skip_custom_providers and _canonicalise_provider_id(slug) != _active_slug:
+                continue
+            p_models = pdef.get('models')
+            if isinstance(p_models, list):
+                for m in p_models:
+                    mid = str(m.get('id') or '') if isinstance(m, dict) else str(m or '')
+                    if not mid:
+                        continue
+                    if mid.strip() == target:
+                        p_base_url = str(pdef.get('base_url') or '').strip()
+                        return model_id, slug, p_base_url or None
+            elif isinstance(p_models, dict):
+                for mid in p_models:
+                    if isinstance(mid, str) and mid.strip() == target:
+                        p_base_url = str(pdef.get('base_url') or '').strip()
+                        return model_id, slug, p_base_url or None
 
     # @provider:model format — explicit provider hint from the dropdown.
     # Route through that provider directly (resolve_runtime_provider will
@@ -2341,13 +2836,13 @@ def resolve_custom_provider_connection(provider_id: str) -> tuple[str | None, st
         if raw_api_key is not None:
             key_text = str(raw_api_key).strip()
             if key_text.startswith("${") and key_text.endswith("}") and len(key_text) > 3:
-                api_key = os.getenv(key_text[2:-1], "").strip() or None
+                api_key = _thread_local_env_value(key_text[2:-1]).strip() or None
             elif key_text:
                 api_key = key_text
         if not api_key:
             key_env = str(raw_key_env or "").strip()
             if key_env:
-                api_key = os.getenv(key_env, "").strip() or None
+                api_key = _thread_local_env_value(key_env).strip() or None
         if not api_key and provider_hint:
             api_key = _lookup_custom_api_key_env(provider_hint)
         return api_key
@@ -2448,8 +2943,19 @@ def model_with_provider_context(model_id: str, model_provider: str | None = None
     if provider == "openrouter":
         return f"@{provider}:{model}"
 
-    # For non-OpenRouter slash IDs, keep the ID intact so existing custom/proxy
-    # base_url routing and portal-provider handling remain in charge.
+    # Explicit providers configured in config.yaml (for example local llama.cpp,
+    # Ollama, LM Studio, vLLM, or other OpenAI-compatible endpoints) must keep
+    # their provider hint even when the model ID is HuggingFace-style and
+    # contains '/'. Otherwise a selected local model such as
+    # 'unsloth/gemma-4-12b-it-GGUF:UD-Q4_K_XL' inherits the default provider
+    # (e.g. openai-codex) and is sent to the wrong backend.
+    providers_cfg = cfg.get("providers") if isinstance(cfg, dict) else {}
+    if isinstance(providers_cfg, dict) and provider in providers_cfg:
+        return f"@{provider}:{model}"
+
+    # For non-OpenRouter slash IDs without an explicit configured provider,
+    # keep the ID intact so existing custom/proxy base_url routing and
+    # portal-provider handling remain in charge.
     if "/" in model:
         return model
 
@@ -2503,10 +3009,32 @@ def parse_reasoning_effort(effort):
     return None
 
 
-def _strip_provider_hint_for_reasoning(model_id: str) -> str:
-    """Remove WebUI routing hints before provider-specific capability lookup."""
+def _strip_provider_hint_for_reasoning(model_id: str, provider: str | None = None) -> str:
+    """Remove WebUI routing hints before provider-specific capability lookup.
+
+    A plain ``@provider:model`` hint strips cleanly on the first colon. But a
+    *named* custom provider hint is ``@custom:<slug>:model`` — two colons —
+    and the naive first-colon split only strips the leading ``@custom:``,
+    leaving ``<slug>:model`` behind. That leftover slug fragment can hide a
+    nested gateway route from prefix-based checks like
+    ``_nested_route_reasoning_denied()`` (e.g. ``agg:vertex/gemini-image-1.0``
+    no longer starts with ``vertex/gemini-``), silently re-enabling reasoning
+    controls on routes that must never expose them.
+
+    When the resolved *provider* is known (e.g. ``"custom:agg"``), strip the
+    exact ``@{provider}:`` prefix first so both segments are removed in one
+    pass. Falls back to the generic first-colon split when no provider is
+    given or it doesn't match — preserving prior behavior for plain
+    ``@provider:model`` hints.
+    """
     model = str(model_id or "").strip()
-    if model.startswith("@") and ":" in model:
+    if not model.startswith("@"):
+        return model
+    if provider:
+        exact_prefix = f"@{provider}:".lower()
+        if model.lower().startswith(exact_prefix):
+            return model[len(exact_prefix) :]
+    if ":" in model:
         return model.split(":", 1)[1]
     return model
 
@@ -2602,17 +3130,38 @@ def _candidate_supports_reasoning(candidate: str) -> bool:
     return False
 
 
+# Matches the nested Gemini gateway route prefix anywhere it appears in a
+# model id, as long as it isn't embedded inside a larger alphanumeric token
+# (the negative lookbehind excludes false positives like "notvertex/gemini-x").
+# Scanning for the pattern at any position — rather than requiring the whole
+# string to start with it — makes the check independent of how many wrapper
+# layers precede the route: ``@provider:``, a named custom-provider slug
+# (``@custom:<slug>:``), or any future nesting scheme none of us have
+# invented yet. This invariant (Gemini image/embedding routes must never
+# expose a reasoning toggle) was bypassed twice via different edge cases in
+# the prefix-stripping logic before being made structurally boundary-based
+# instead of prefix-based — see PR #5313 review history.
+_NESTED_ROUTE_PATTERN = re.compile(r"(?<![a-z0-9])(vertex/gemini-|gemini_cli/gemini-)(.*)$")
+
+
 def _nested_route_reasoning_denied(model: str) -> bool:
-    """Hard deny for nested Gemini gateway routes that must never show a reasoning toggle."""
+    """Hard deny for nested Gemini gateway routes that must never show a reasoning toggle.
+
+    Matches the route pattern anywhere in *model*, not just when the whole
+    string starts with it, so this check does not depend on a caller having
+    stripped exactly the right wrapper prefix first. Callers should still
+    pass the least-wrapped form they have (e.g. after
+    ``_strip_provider_hint_for_reasoning``) for clarity, but correctness no
+    longer hinges on it.
+    """
     lower = str(model or "").strip().lower()
     if not lower:
         return False
-    for prefix in ("vertex/gemini-", "gemini_cli/gemini-"):
-        if lower.startswith(prefix):
-            tail = lower[len(prefix) :]
-            if tail.startswith("embedding") or "image" in tail or "imagine" in tail:
-                return True
-    return False
+    match = _NESTED_ROUTE_PATTERN.search(lower)
+    if not match:
+        return False
+    tail = match.group(2)
+    return tail.startswith("embedding") or "image" in tail or "imagine" in tail
 
 
 def _nested_gateway_route_reasoning(model: str) -> bool:
@@ -2940,13 +3489,45 @@ def resolve_model_reasoning_efforts(
             provider = str((cfg.get("model") or {}).get("provider") or "").strip().lower()
 
     provider = _resolve_provider_alias(provider)
+
+    # IDE-copilot providers never expose reasoning effort options.
+    # Guard early so a stray config entry can't override this.
     if provider in {"cursor-acp", "copilot-acp"}:
         return []
 
-    hinted_model = _strip_provider_hint_for_reasoning(model)
+    hinted_model = _strip_provider_hint_for_reasoning(model, provider)
 
+    # Master hides reasoning controls for nested image/embedding routes. Keep
+    # that hard deny above provider config so an explicit allowlist cannot
+    # re-enable controls for routes that should never expose them.
     if _nested_route_reasoning_denied(hinted_model):
         return []
+
+    # 0. Provider config: providers.<name>.reasoning_efforts or named
+    # custom_providers[].reasoning_efforts. When the user has explicitly listed
+    # valid efforts for a provider, return that list directly — no heuristics,
+    # no models.dev lookup.
+    # Only short-circuits when the filtered list is non-empty; an all-invalid
+    # list (e.g. typos) falls through to heuristics instead of hiding reasoning.
+    _re_list = None
+    try:
+        if provider and provider.startswith("custom:"):
+            for _entry in _custom_provider_entries():
+                if _custom_provider_slug_from_name(_entry.get("name")) == provider:
+                    _re_list = _entry.get("reasoning_efforts")
+                    break
+        elif provider:
+            _prov_entry = (cfg.get("providers") or {}).get(provider, {})
+            if isinstance(_prov_entry, dict):
+                _re_list = _prov_entry.get("reasoning_efforts")
+        if isinstance(_re_list, list) and _re_list:
+            _filtered = [str(x).strip().lower() for x in _re_list
+                         if str(x).strip().lower() in {*VALID_REASONING_EFFORTS, "none"}]
+            _filtered = list(dict.fromkeys(_filtered))
+            if _filtered:
+                return _filtered
+    except Exception:
+        pass
 
     if provider in {"copilot", "github-copilot"}:
         try:
@@ -3108,6 +3689,83 @@ def get_reasoning_status(
     }
 
 
+def _parse_positive_int_config_value(raw) -> int | None:
+    if raw is None:
+        return None
+    try:
+        parsed = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
+def get_max_tokens_status() -> dict[str, int | None]:
+    """Return the Settings-facing max_tokens state from the active profile config.
+
+    ``max_tokens`` is the root override the Settings field owns directly.
+    ``max_tokens_fallback`` is the agent-level fallback when the root config
+    resolves to ``None``, matching the streaming path exactly.
+    ``max_tokens_effective`` is the runtime cap a new streaming turn would
+    currently use.
+    """
+    config_data = _load_yaml_config_file(_get_config_path())
+    if not isinstance(config_data, dict):
+        return {
+            "max_tokens": None,
+            "max_tokens_effective": None,
+            "max_tokens_fallback": None,
+        }
+
+    raw_root_value = config_data.get("max_tokens")
+    root_value = _parse_positive_int_config_value(raw_root_value)
+
+    fallback_value = None
+    if raw_root_value is None:
+        agent_cfg = config_data.get("agent")
+        if isinstance(agent_cfg, dict):
+            fallback_value = _parse_positive_int_config_value(agent_cfg.get("max_tokens"))
+
+    effective_value = root_value if root_value is not None else fallback_value
+    return {
+        "max_tokens": root_value,
+        "max_tokens_effective": effective_value,
+        "max_tokens_fallback": fallback_value,
+    }
+
+
+def set_max_tokens(max_tokens) -> dict[str, int | None]:
+    """Persist a root-level ``max_tokens`` override to the active profile config.
+
+    Blank/``None`` clears the root override so ``agent.max_tokens`` can resume.
+    Positive integers are written to the active profile's ``config.yaml``.
+    Unrelated YAML keys are preserved verbatim.
+    """
+    if isinstance(max_tokens, str):
+        max_tokens = max_tokens.strip()
+    clear_root = max_tokens in (None, "")
+    parsed_max_tokens = _parse_positive_int_config_value(max_tokens)
+    if not clear_root and parsed_max_tokens is None:
+        return get_max_tokens_status()
+
+    config_path = _get_config_path()
+    should_save = True
+    with _cfg_lock:
+        config_data = _load_yaml_config_file_raw(config_path)
+        if clear_root:
+            if "max_tokens" not in config_data:
+                should_save = False
+            else:
+                config_data.pop("max_tokens", None)
+        elif parsed_max_tokens is not None:
+            config_data["max_tokens"] = parsed_max_tokens
+        if should_save:
+            _save_yaml_config_file(config_path, config_data)
+    if not should_save:
+        return get_max_tokens_status()
+    reload_config()
+    return get_max_tokens_status()
+
+
 def set_reasoning_display(show: bool) -> dict:
     """Persist ``display.show_reasoning`` to the active profile's config.yaml.
 
@@ -3180,14 +3838,85 @@ def _public_advanced_model_options(model_cfg: dict) -> dict:
     }
 
 
-def _main_model_request_overrides(config_data: dict) -> dict:
-    """Return supported runtime request overrides for the main chat model."""
+def _is_openai_family_provider(provider: str | None) -> bool:
+    """Return True when a provider should receive OpenAI-family request overrides."""
+    if not provider:
+        return False
+    resolved = str(_resolve_provider_alias(str(provider).strip().lower()))
+    return resolved in ("openai", "openai-api", "openai-codex")
+
+
+def _main_model_supports_service_tier(
+    model_id: str | None,
+    provider: str | None,
+) -> bool:
+    """Return True when the current main-model selection can use OpenAI service tier."""
+    if not _is_openai_family_provider(provider):
+        return False
+    resolved = str(provider or "").strip().lower()
+    if resolved == "openai-codex":
+        return False
+    raw_model = str(model_id or "").strip().lower()
+    if not raw_model:
+        return True
+    if "/" in raw_model:
+        prefix, bare_model = raw_model.split("/", 1)
+        if prefix != "openai":
+            return False
+    else:
+        bare_model = raw_model
+    if "codex" in bare_model:
+        return False
+    return (
+        _is_first_party_model("openai", bare_model)
+        or bare_model.startswith(("gpt-", "o1", "o3", "o4"))
+    )
+
+
+def _public_main_service_tier(model_cfg: dict) -> str:
+    """Return the saved main-model service tier only for OpenAI-family providers."""
+    if not isinstance(model_cfg, dict):
+        return ""
+    model_id = str(model_cfg.get("default") or model_cfg.get("name") or "").strip()
+    provider = str(model_cfg.get("provider") or "").strip().lower()
+    if not provider:
+        _, provider, _ = resolve_model_provider(model_id)
+    if not _main_model_supports_service_tier(model_id, provider):
+        return ""
+    service_tier = str(model_cfg.get("service_tier") or "").strip().lower()
+    return "priority" if service_tier == "priority" else ""
+
+
+def _main_model_request_overrides(
+    config_data: dict,
+    effective_model: str | None = None,
+    effective_provider: str | None = None,
+) -> dict:
+    """Return supported runtime request overrides for the main chat model.
+
+    When *effective_model* / *effective_provider* are supplied, the
+    service-tier gate checks those instead of the saved default model,
+    so a per-session model switch to a non-OpenAI provider does not
+    leak ``service_tier`` onto an unsupported request.
+    """
     if not isinstance(config_data, dict):
         return {}
     model_cfg = config_data.get("model", {})
     if not isinstance(model_cfg, dict):
         return {}
     overrides = {}
+    gate_model = effective_model
+    gate_provider = effective_provider
+    if not gate_model:
+        gate_model = str(model_cfg.get("default") or model_cfg.get("name") or "").strip()
+    if not gate_provider:
+        gate_provider = str(model_cfg.get("provider") or "").strip().lower()
+        if not gate_provider:
+            _, gate_provider, _ = resolve_model_provider(gate_model)
+    if _main_model_supports_service_tier(gate_model, gate_provider):
+        service_tier = str(model_cfg.get("service_tier") or "").strip().lower()
+        if service_tier == "priority":
+            overrides["service_tier"] = "priority"
     extra_body = model_cfg.get("extra_body")
     if isinstance(extra_body, dict) and extra_body:
         overrides["extra_body"] = copy.deepcopy(extra_body)
@@ -3230,6 +3959,14 @@ def _apply_advanced_model_options(model_cfg: dict, advanced: dict | None) -> Non
                 model_cfg.pop("extra_body", None)
         else:
             raise ValueError("extra_body must be a JSON object")
+    if "service_tier" in advanced:
+        service_tier = str(advanced.get("service_tier") or "").strip().lower()
+        if not service_tier or service_tier == "default":
+            model_cfg.pop("service_tier", None)
+        elif service_tier == "priority":
+            model_cfg["service_tier"] = "priority"
+        else:
+            raise ValueError("service_tier must be one of: default, priority")
     if advanced.get("api_key_clear"):
         model_cfg.pop("api_key", None)
     api_key = str(advanced.get("api_key") or "").strip()
@@ -3237,7 +3974,7 @@ def _apply_advanced_model_options(model_cfg: dict, advanced: dict | None) -> Non
         model_cfg["api_key"] = api_key
 
 
-def set_hermes_default_model(model_id: str, advanced: dict | None = None) -> dict:
+def set_hermes_default_model(model_id: str, provider: str | None = None, advanced: dict | None = None) -> dict:
     """Persist the Hermes default model in config.yaml and reload runtime config."""
     selected_model = str(model_id or "").strip()
     if not selected_model:
@@ -3254,6 +3991,7 @@ def set_hermes_default_model(model_id: str, advanced: dict | None = None) -> dic
             model_cfg = {}
 
         previous_provider = str(model_cfg.get("provider") or "").strip()
+        requested_provider = str(provider or "").strip()
         resolved_model, resolved_provider, resolved_base_url = resolve_model_provider(
             selected_model
         )
@@ -3267,7 +4005,8 @@ def set_hermes_default_model(model_id: str, advanced: dict | None = None) -> dic
         # CLI-shaped bare form via `_applyModelToDropdown()`'s normalising
         # matcher — see `static/panels.js` (#895).
         persisted_model = str(resolved_model or selected_model).strip()
-        persisted_provider = str(resolved_provider or previous_provider or "").strip()
+        persisted_provider = str(requested_provider or resolved_provider or previous_provider or "").strip()
+        provider_override_won = bool(requested_provider and requested_provider != str(resolved_provider or "").strip())
         # Never persist the bogus ``local`` value — see #1384. The auto-detect
         # block in ``_build_available_models_uncached`` was rewriting unknown
         # loopback hosts to ``provider: "local"``, which is not registered and
@@ -3280,15 +4019,22 @@ def set_hermes_default_model(model_id: str, advanced: dict | None = None) -> dic
         if persisted_provider:
             model_cfg["provider"] = persisted_provider
 
-        if resolved_base_url:
+        if resolved_base_url and not provider_override_won:
             model_cfg["base_url"] = str(resolved_base_url).strip().rstrip("/")
         elif persisted_provider != previous_provider:
             if persisted_provider == "openai":
                 model_cfg["base_url"] = "https://api.openai.com/v1"
-            elif not persisted_provider.startswith("custom:"):
+            else:
+                # Provider changed and we have no resolved URL for the new one.
+                # Drop the previous provider's base_url so New Chat doesn't route
+                # to the old endpoint — this MUST also cover custom:* providers
+                # (a different custom provider has a different URL); leaving the
+                # stale base_url sent requests to the wrong host (#4728).
                 model_cfg.pop("base_url", None)
 
         _apply_advanced_model_options(model_cfg, advanced)
+        if not _main_model_supports_service_tier(persisted_model, persisted_provider):
+            model_cfg.pop("service_tier", None)
 
         config_data["model"] = model_cfg
         _save_yaml_config_file(config_path, config_data)
@@ -3299,7 +4045,7 @@ def set_hermes_default_model(model_id: str, advanced: dict | None = None) -> dic
     # it triggers a live provider fetch (up to 8s) that blocks the HTTP response
     # to the browser, causing a visible freeze on every Settings save (#895).
     invalidate_models_cache()
-    return {"ok": True, "model": persisted_model}
+    return {"ok": True, "model": persisted_model, "provider": persisted_provider or None}
 
 
 # ── Auxiliary model configuration ──────────────────────────────────────────
@@ -3331,7 +4077,7 @@ def get_auxiliary_models() -> dict:
             {"task": "vision", "provider": "auto", "model": "", "base_url": ""},
             ...
         ],
-        "main": {"provider": "openrouter", "model": "anthropic/claude-opus-4.7"},
+        "main": {"provider": "openrouter", "model": "anthropic/claude-opus-4.7", "service_tier": ""},
     }
     """
     reload_config()
@@ -3367,6 +4113,7 @@ def get_auxiliary_models() -> dict:
         "main": {
             "provider": main_provider,
             "model": main_model,
+            "service_tier": _public_main_service_tier(model_cfg),
             **_public_advanced_model_options(model_cfg),
         },
     }
@@ -3452,8 +4199,10 @@ def set_auxiliary_model(task: str, provider: str, model: str, advanced: dict | N
 # ── TTL cache for get_available_models() ─────────────────────────────────────
 _available_models_cache: dict | None = None
 _available_models_cache_ts: float = 0.0
+_available_models_live_rebuild_ts: float = 0.0
 _available_models_cache_source_fingerprint: dict | None = None
 _AVAILABLE_MODELS_CACHE_TTL: float = 86400.0  # 24 hours
+_SESSION_VISIT_MODELS_FRESHNESS_SECONDS: float = 300.0
 _available_models_cache_lock = threading.RLock()  # must be RLock: cold path refactoring moved slow work inside this lock, requiring re-entry
 _cache_build_cv = threading.Condition(_available_models_cache_lock)  # shares underlying RLock so notify_all() is safe inside with _available_models_cache_lock
 _cache_build_in_progress = False  # True while a cold path is actively building
@@ -4095,6 +4844,90 @@ def _credential_pool_profile_tag() -> str:
         return ""
 
 
+def _pool_entry_payloads(provider_id: str) -> list[dict[str, Any]]:
+    """Return explicit credential-pool entry payloads for the active profile.
+
+    Readonly profile scopes must not let ``load_pool()`` seed from process env,
+    because that can materialize server-default credentials into a named
+    profile's auth store. In that mode, read raw auth.json payloads only.
+    """
+    _pid = _resolve_provider_alias(provider_id)
+    if bool(getattr(_thread_ctx, "block_process_env_fallback", False)):
+        try:
+            from hermes_cli.auth import read_credential_pool as _read_credential_pool
+
+            raw_entries = _read_credential_pool(_pid)
+        except ImportError:
+            return []
+        payloads: list[dict[str, Any]] = []
+        for entry in raw_entries:
+            if not isinstance(entry, dict):
+                continue
+            if _is_ambient_gh_cli_entry(
+                str(entry.get("source", "") or ""),
+                str(entry.get("label", "") or ""),
+                str(entry.get("key_source", "") or ""),
+            ):
+                continue
+            payloads.append(dict(entry))
+        return payloads
+
+    try:
+        from agent.credential_pool import load_pool as _load_pool
+
+        _ck = (_credential_pool_profile_tag(), _pid)
+        _cached = _CREDENTIAL_POOL_CACHE.get(_ck)
+        if _cached is not None:
+            _cp_ts, _cp_pool = _cached
+            if (time.time() - _cp_ts) < 86400.0:
+                _all_entries = _cp_pool.entries() if _cp_pool is not None and hasattr(_cp_pool, "entries") else []
+            else:
+                _cp_pool = _load_pool(_pid)
+                _CREDENTIAL_POOL_CACHE[_ck] = (time.time(), _cp_pool)
+                _all_entries = _cp_pool.entries() if _cp_pool is not None and hasattr(_cp_pool, "entries") else []
+        else:
+            _cp_pool = _load_pool(_pid)
+            _CREDENTIAL_POOL_CACHE[_ck] = (time.time(), _cp_pool)
+            _all_entries = _cp_pool.entries() if _cp_pool is not None and hasattr(_cp_pool, "entries") else []
+    except ImportError:
+        return []
+
+    payloads = []
+    for entry in _all_entries:
+        if _is_ambient_gh_cli_entry(
+            str(getattr(entry, "source", "") or ""),
+            str(getattr(entry, "label", "") or ""),
+            str(getattr(entry, "key_source", "") or ""),
+        ):
+            continue
+        if hasattr(entry, "to_dict") and callable(entry.to_dict):
+            payload = entry.to_dict()
+        elif isinstance(entry, dict):
+            payload = dict(entry)
+        else:
+            try:
+                payload = dict(vars(entry))
+            except TypeError:
+                payload = {}
+        if not isinstance(payload, dict):
+            payload = {}
+        payload = dict(payload)
+        payload.setdefault("source", str(getattr(entry, "source", "") or ""))
+        payload.setdefault("label", str(getattr(entry, "label", "") or ""))
+        payload.setdefault("key_source", str(getattr(entry, "key_source", "") or ""))
+        runtime_api_key = getattr(entry, "runtime_api_key", None)
+        if runtime_api_key:
+            payload["runtime_api_key"] = runtime_api_key
+        base_url = getattr(entry, "base_url", None)
+        if base_url:
+            payload["base_url"] = base_url
+        inference_base_url = getattr(entry, "inference_base_url", None)
+        if inference_base_url:
+            payload["inference_base_url"] = inference_base_url
+        payloads.append(payload)
+    return payloads
+
+
 def _has_explicit_pool_credentials(provider_id: str) -> bool:
     """Return True when the credential pool has at least one non-ambient entry
     for *provider_id* (i.e. not a gh-cli / GITHUB_TOKEN auto-detect).
@@ -4103,35 +4936,7 @@ def _has_explicit_pool_credentials(provider_id: str) -> bool:
     detection, model listing, live-model fetch) don't pay the ~10s load_pool
     cost more than once per TTL window.
     """
-    try:
-        from agent.credential_pool import load_pool as _load_pool
-
-        _pid = _resolve_provider_alias(provider_id)
-        _ck = (_credential_pool_profile_tag(), _pid)
-        _cached = _CREDENTIAL_POOL_CACHE.get(_ck)
-        if _cached is not None:
-            _cp_ts, _cp_pool = _cached
-            if (time.time() - _cp_ts) < 86400.0:
-                _all_entries = _cp_pool.entries()
-            else:
-                _cp_pool = _load_pool(_pid)
-                _CREDENTIAL_POOL_CACHE[_ck] = (time.time(), _cp_pool)
-                _all_entries = _cp_pool.entries()
-        else:
-            _cp_pool = _load_pool(_pid)
-            _CREDENTIAL_POOL_CACHE[_ck] = (time.time(), _cp_pool)
-            _all_entries = _cp_pool.entries()
-
-        return any(
-            not _is_ambient_gh_cli_entry(
-                str(getattr(e, "source", "") or ""),
-                str(getattr(e, "label", "") or ""),
-                str(getattr(e, "key_source", "") or ""),
-            )
-            for e in _all_entries
-        )
-    except ImportError:
-        return False
+    return bool(_pool_entry_payloads(provider_id))
 _provider_models_invalidated_ts: dict[str, float] = {}  # provider_id -> timestamp of last invalidation
 
 # Disk-backed in-memory cache for get_available_models().
@@ -4550,12 +5355,84 @@ def _load_models_cache_from_disk() -> dict | None:
         if not _is_loadable_disk_cache(cache):
             return None
         # Strip the disk-only metadata before returning, so the in-memory
-        # cache shape stays exactly what the rest of the code expects.
+        # cache shape stays exactly what the rest of the code expects. The
+        # disk save path does not persist `aliases`, so reconstruct them from
+        # current config to keep the /api/models.aliases contract intact (a
+        # disk-cache hit must not silently drop `/model <alias>` resolution).
         return {
             "active_provider": cache["active_provider"],
             "default_model": cache["default_model"],
             "configured_model_badges": cache["configured_model_badges"],
             "groups": cache["groups"],
+            "aliases": (
+                cache["aliases"]
+                if isinstance(cache.get("aliases"), dict)
+                else _model_aliases_from_config()
+            ),
+        }
+    except Exception:
+        return None
+
+
+def _model_aliases_from_config() -> dict[str, str]:
+    """Build the normalized model-alias map from current config.
+
+    Mirrors the alias construction used by the live and static catalog paths so
+    the `/api/models.aliases` contract is consistent across every catalog source
+    (live, static, and the stale-disk fallback, which can't read aliases from a
+    disk cache that never persisted them).
+    """
+    try:
+        raw_aliases = cfg.get("model", {}).get("aliases", {})
+        if isinstance(raw_aliases, dict):
+            return {
+                str(k).strip(): str(v).strip()
+                for k, v in raw_aliases.items()
+                if k and v
+            }
+    except Exception:
+        pass
+    return {}
+
+
+def _load_stale_models_cache_from_disk() -> dict | None:
+    """Load a shape-valid stale /api/models disk cache for timeout fallback only.
+
+    The main cache loader enforces metadata stamps for a full cold-path cache hit.
+    This helper intentionally does not apply that stricter policy, so we can still
+    recover a useful fallback payload when the strict loader rejected cache because
+    metadata or fingerprint fields are stale. It DOES still enforce the schema
+    version: a cross-schema cache can have an incompatible groups/badge shape, so
+    serving it to the picker could surface a broken catalog — schema mismatch is a
+    hard reject even on the fallback path.
+    """
+    try:
+        import json as _j
+
+        cache_path = _get_models_cache_path()
+        if not cache_path.exists():
+            return None
+        with open(cache_path, encoding="utf-8") as f:
+            cache = _j.load(f)
+        if not _is_valid_models_cache(cache):
+            return None
+        if cache.get("_schema_version") != _MODELS_CACHE_SCHEMA_VERSION:
+            return None
+        aliases = cache.get("aliases")
+        if not isinstance(aliases, dict):
+            # The disk cache save path does not persist `aliases`, so a cache
+            # read back from disk lacks them. Defaulting to {} would silently
+            # break `/model <alias>` slash-command resolution (static/commands.js
+            # resolves slash aliases only from /api/models.aliases) for the
+            # duration of the over-budget stale fallback. Reconstruct from
+            # current config, mirroring the live/static catalog alias build.
+            aliases = _model_aliases_from_config()
+        return {
+            "active_provider": cache["active_provider"],
+            "default_model": cache["default_model"],
+            "configured_model_badges": cache["configured_model_badges"],
+            "groups": cache["groups"],
+            "aliases": aliases,
         }
     except Exception:
         return None
@@ -4602,7 +5479,8 @@ def _save_models_cache_to_disk(cache: dict) -> None:
 
 def _get_fresh_memory_models_cache(now: float) -> dict | None:
     """Return a valid fresh in-memory /api/models cache, or clear stale shapes."""
-    global _available_models_cache, _available_models_cache_ts, _available_models_cache_source_fingerprint
+    global _available_models_cache, _available_models_cache_ts
+    global _available_models_live_rebuild_ts, _available_models_cache_source_fingerprint
     if _available_models_cache is None:
         return None
     if (now - _available_models_cache_ts) >= _AVAILABLE_MODELS_CACHE_TTL:
@@ -4616,12 +5494,14 @@ def _get_fresh_memory_models_cache(now: float) -> dict | None:
         )
         _available_models_cache = None
         _available_models_cache_ts = 0.0
+        _available_models_live_rebuild_ts = 0.0
         _available_models_cache_source_fingerprint = None
         return None
     if _is_valid_models_cache(_available_models_cache):
         return copy.deepcopy(_available_models_cache)
     _available_models_cache = None
     _available_models_cache_ts = 0.0
+    _available_models_live_rebuild_ts = 0.0
     _available_models_cache_source_fingerprint = None
     return None
 
@@ -4640,10 +5520,12 @@ def invalidate_models_cache():
     result from the disk cache because the disk hit is checked before the memory
     cache rebuild runs.
     """
-    global _cache_build_in_progress, _available_models_cache, _available_models_cache_ts, _available_models_cache_source_fingerprint, _cache_build_cv
+    global _cache_build_in_progress, _available_models_cache, _available_models_cache_ts
+    global _available_models_live_rebuild_ts, _available_models_cache_source_fingerprint, _cache_build_cv
     with _available_models_cache_lock:
         _available_models_cache = None
         _available_models_cache_ts = 0.0
+        _available_models_live_rebuild_ts = 0.0
         _available_models_cache_source_fingerprint = None
         _cache_build_in_progress = False
         _cache_build_cv.notify_all()
@@ -4697,10 +5579,12 @@ def invalidate_provider_models_cache(provider_id: str):
     Args:
         provider_id: canonical provider id (e.g. 'openai', 'anthropic', 'custom:my-key')
     """
-    global _available_models_cache, _available_models_cache_ts, _available_models_cache_source_fingerprint, _CREDENTIAL_POOL_CACHE
+    global _available_models_cache, _available_models_cache_ts
+    global _available_models_live_rebuild_ts, _available_models_cache_source_fingerprint, _CREDENTIAL_POOL_CACHE
     with _available_models_cache_lock:
         _available_models_cache = None
         _available_models_cache_ts = 0.0
+        _available_models_live_rebuild_ts = 0.0
         _available_models_cache_source_fingerprint = None
         _provider_models_invalidated_ts[provider_id] = time.time()
         # Also evict the credential pool so the next cold path re-loads it.
@@ -4808,6 +5692,28 @@ def _models_from_live_provider_ids(provider_id: str, live_ids: list[str]) -> lis
     return models
 
 
+def _moa_preset_models_from_config(config_obj: dict | None = None) -> list[dict]:
+    """Return enabled MoA presets from local config as picker model entries."""
+    source = config_obj if isinstance(config_obj, dict) else cfg
+    moa_cfg = source.get("moa") if isinstance(source, dict) else None
+    if not isinstance(moa_cfg, dict) or not bool(moa_cfg.get("enabled", True)):
+        return []
+    presets = moa_cfg.get("presets")
+    if not isinstance(presets, dict):
+        return []
+    models: list[dict] = []
+    seen: set[str] = set()
+    for name, preset_cfg in presets.items():
+        preset_name = str(name or "").strip()
+        if not preset_name or preset_name in seen:
+            continue
+        if isinstance(preset_cfg, dict) and preset_cfg.get("enabled") is False:
+            continue
+        seen.add(preset_name)
+        models.append({"id": preset_name, "label": preset_name})
+    return models
+
+
 def _read_visible_codex_cache_model_ids() -> list[str]:
     """Return visible model slugs from Codex's local models_cache.json.
 
@@ -4849,7 +5755,7 @@ def _read_visible_codex_cache_model_ids() -> list[str]:
     return ordered
 
 
-def get_available_models(*, prefer_cache: bool = False) -> dict:
+def get_available_models(*, prefer_cache: bool = False, force_refresh: bool = False) -> dict:
     """
     Return available models grouped by provider.
 
@@ -4873,8 +5779,13 @@ def get_available_models(*, prefer_cache: bool = False) -> dict:
     server-initiated wakeup turn (Option Z) takes so a cold catalog can never
     block the wakeup chat/start on a flaky network. A normal human request
     leaves this False and keeps the full live-discovery behaviour.
+
+    ``force_refresh=True`` is an internal escape hatch for bounded freshness
+    checks that need a real live rebuild while preserving the default cache
+    contract for every existing caller.
     """
-    global _cache_build_in_progress, _available_models_cache, _available_models_cache_ts, _available_models_cache_source_fingerprint, _cache_build_cv
+    global _cache_build_in_progress, _available_models_cache, _available_models_cache_ts
+    global _available_models_live_rebuild_ts, _available_models_cache_source_fingerprint, _cache_build_cv
     # Config mtime check — must come before any config reads.
     # (Test #585 verifies _current_mtime appears before active_provider = None)
     try:
@@ -4883,11 +5794,10 @@ def get_available_models(*, prefer_cache: bool = False) -> dict:
     except OSError:
         _current_path = _get_config_path()
         _current_mtime = 0.0
-    if (
-        (_current_mtime != _cfg_mtime or _current_path != _cfg_path)
-        and not _cfg_has_in_memory_overrides()
-    ):
-        reload_config()
+    path_changed = _current_path != _cfg_path
+    mtime_stale = _current_mtime != _cfg_mtime
+    if path_changed or (mtime_stale and not _cfg_has_in_memory_overrides()):
+        reload_config_if_stale()
     # ── COLD PATH helper ─────────────────────────────────────────────────────
     # Extracted so it runs inside _available_models_cache_lock (RLock) to
     # prevent thundering-herd: only one thread rebuilds while others wait.
@@ -5176,8 +6086,9 @@ def get_available_models(*, prefer_cache: bool = False) -> dict:
                 except Exception:
                     logger.debug("Failed to parse hermes env file")
             all_env = {**env_keys}
+            _anthropic_env_vars = _get_anthropic_fallback_env_vars()
             for k in (
-                "ANTHROPIC_API_KEY",
+                *_anthropic_env_vars,
                 "OPENAI_API_KEY",
                 "OPENROUTER_API_KEY",
                 "GOOGLE_API_KEY",
@@ -5196,10 +6107,10 @@ def get_available_models(*, prefer_cache: bool = False) -> dict:
                 "AWS_ACCESS_KEY_ID",
                 "AWS_SECRET_ACCESS_KEY",
             ):
-                val = os.getenv(k)
+                val = _thread_local_env_value(k).strip()
                 if val:
                     all_env[k] = val
-            if all_env.get("ANTHROPIC_API_KEY"):
+            if any(all_env.get(env_var) for env_var in _anthropic_env_vars):
                 detected_providers.add("anthropic")
             if all_env.get("OPENAI_API_KEY"):
                 # hermes-agent registers its OPENAI_API_KEY/OPENAI_BASE_URL provider
@@ -5285,7 +6196,28 @@ def get_available_models(*, prefer_cache: bool = False) -> dict:
                     or _is_plugin_model_provider(_canonical)
                 )
                 _is_provider_config = isinstance(_provider_cfg, dict)
-                if not (_is_known_provider or _is_provider_config):
+                _has_provider_route = False
+                if _is_provider_config:
+                    _has_provider_route = any(
+                        str(_provider_cfg.get(_route_key) or "").strip()
+                        for _route_key in ("api", "base_url", "api_key", "key_env")
+                    )
+                # A models-only provider config (no api/base_url/api_key/key_env)
+                # is only admitted as evidence when it's the active/configured
+                # provider (e.g. the lmstudio-style custom shape from #1970).
+                # This must NOT re-open the door for a spurious duplicate alias
+                # of a known provider (e.g. ``copilot-2: {name: "copilot",
+                # models: {...}}`` from #644/dedup regression) — that case is
+                # still rejected because it isn't the active provider and it
+                # isn't a route-bearing config in its own right.
+                _has_models_only_active_route = (
+                    not _has_provider_route
+                    and _is_provider_config
+                    and isinstance(_provider_cfg.get("models"), (dict, list))
+                    and _provider_cfg["models"]
+                    and _canonical == _canonicalise_provider_id(active_provider)
+                )
+                if not (_is_known_provider or _has_provider_route or _has_models_only_active_route):
                     continue
 
                 _canonical_to_raw_provider_key.setdefault(_canonical, _pid_key)
@@ -5519,7 +6451,7 @@ def get_available_models(*, prefer_cache: bool = False) -> dict:
                     "API_KEY",
                 )
                 for key in api_key_vars:
-                    api_key = (all_env.get(key) or os.getenv(key) or "").strip()
+                    api_key = (all_env.get(key) or _thread_local_env_value(key) or "").strip()
                     if api_key:
                         break
 
@@ -5561,7 +6493,7 @@ def get_available_models(*, prefer_cache: bool = False) -> dict:
                 if not _cp_api_key:
                     _cp_key_env = str(_cp.get("key_env") or "").strip()
                     if _cp_key_env:
-                        _cp_api_key = str(os.getenv(_cp_key_env) or "").strip()
+                        _cp_api_key = _thread_local_env_value(_cp_key_env).strip()
                 # Fallback: check credential pool for both api_key and base_url
                 if (not _cp_api_key or not _cp_base_url) and _slug:
                     try:
@@ -5721,6 +6653,16 @@ def get_available_models(*, prefer_cache: bool = False) -> dict:
                 _c = _canonicalise_provider_id(_pid) or _pid
                 _canonicalised_detected.add(_c)
             detected_providers = _canonicalised_detected
+
+        try:
+            _moa_cfg = cfg.get("moa") if isinstance(cfg, dict) else None
+            if isinstance(_moa_cfg, dict):
+                _moa_enabled = bool(_moa_cfg.get("enabled", True))
+                _moa_presets = _moa_cfg.get("presets")
+                if _moa_enabled and isinstance(_moa_presets, dict) and _moa_presets:
+                    detected_providers.add("moa")
+        except Exception:
+            logger.debug("Failed to inspect MoA presets for model picker", exc_info=True)
 
         # 5. Build model groups
         if detected_providers:
@@ -6061,6 +7003,7 @@ def get_available_models(*, prefer_cache: bool = False) -> dict:
                         _append_picker_group(provider_name, pid, raw_models)
                 elif (
                     pid in _PROVIDER_MODELS
+                    or pid in _PROVIDER_DISPLAY
                     or pid in _canonical_to_raw_provider_key
                     or _is_plugin_model_provider(pid)
                 ):
@@ -6074,11 +7017,21 @@ def get_available_models(*, prefer_cache: bool = False) -> dict:
                     raw_models = []
 
                     # User-configured model allowlists are explicit local
-                    # source-of-truth and should still beat auto-discovery.
-                    # Otherwise, ask Hermes CLI first so WebUI tracks the same
-                    # live catalog as the agent/CLI picker; WebUI's static
-                    # _PROVIDER_MODELS table is now a fallback only (#1240).
-                    if isinstance(provider_cfg, dict) and "models" in provider_cfg:
+                    # source-of-truth for custom/plugin providers, AND for most
+                    # built-in Hermes providers (e.g. providers.anthropic.models
+                    # is a real picker allowlist — see #644). Copilot is the
+                    # exception: it uses providers.copilot.models as a per-model
+                    # settings map (reasoning_effort, limits, etc.), so treating
+                    # that as an allowlist collapsed the Copilot picker to
+                    # whichever model had local settings. Only Copilot skips the
+                    # config-models allowlist branch and asks Hermes CLI for the
+                    # live catalog first (static _PROVIDER_MODELS is fallback only).
+                    _uses_models_as_settings_map = pid == "copilot"
+                    if (
+                        not _uses_models_as_settings_map
+                        and isinstance(provider_cfg, dict)
+                        and "models" in provider_cfg
+                    ):
                         cfg_models = provider_cfg["models"]
                         if isinstance(cfg_models, dict):
                             raw_models = [{"id": k, "label": k} for k in cfg_models.keys()]
@@ -6088,10 +7041,19 @@ def get_available_models(*, prefer_cache: bool = False) -> dict:
                                            for k in cfg_models]
 
                     if not raw_models:
-                        raw_models = _models_from_live_provider_ids(
-                            pid,
-                            _read_live_provider_model_ids(pid),
-                        )
+                        if pid == "moa":
+                            raw_models = _moa_preset_models_from_config(cfg)
+                        elif pid == "opencode-go":
+                            # Skip live /v1/models probe for OpenCode Go — it
+                            # returns models from the public catalog that are
+                            # not enabled on the Go tier, causing 404 when
+                            # selected. Use the curated static list only. (#5311)
+                            pass
+                        else:
+                            raw_models = _models_from_live_provider_ids(
+                                pid,
+                                _read_live_provider_model_ids(pid),
+                            )
 
                     if not raw_models:
                         raw_models = copy.deepcopy(_PROVIDER_MODELS.get(pid, []))
@@ -6287,6 +7249,7 @@ def get_available_models(*, prefer_cache: bool = False) -> dict:
     # If another thread has already started the cold path, we will wait for
     # its result rather than running the cold path concurrently.
     should_wait = _cache_build_in_progress
+    force_refresh_started_at = time.monotonic() if force_refresh else None
 
     # Check config mtime OUTSIDE the lock so this cheap check doesn't serialize
     # concurrent requests.  Must come before any config reads in the cold path.
@@ -6300,41 +7263,109 @@ def get_available_models(*, prefer_cache: bool = False) -> dict:
     # Then acquire lock and check memory cache.  Cold path runs inside the lock
     # so only one thread rebuilds while others wait.
     disk_groups = None
-    if _available_models_cache is None:
+    stale_disk_groups = None
+    if _available_models_cache is None and not force_refresh:
         disk_groups = _load_models_cache_from_disk()
+        if disk_groups is None:
+            stale_disk_groups = _load_stale_models_cache_from_disk()
+    elif force_refresh:
+        stale_disk_groups = _load_stale_models_cache_from_disk()
 
     with _available_models_cache_lock:
         # If another thread is already building, wait for its result instead
         # of re-entering the cold path (avoids duplicate 10s zai load_pool calls).
         if should_wait:
+            wait_timeout = 60.0
+            if force_refresh and force_refresh_started_at is not None:
+                if _LIVE_REBUILD_BUDGET_SECONDS <= 0:
+                    # The legacy synchronous path is explicitly unbounded. A
+                    # forced refresh follower should keep coalescing behind
+                    # that live rebuild instead of giving up after 60s and
+                    # duplicating it.
+                    wait_timeout = None
+                else:
+                    wait_timeout = max(
+                        0.0,
+                        _LIVE_REBUILD_BUDGET_SECONDS - (time.monotonic() - force_refresh_started_at),
+                    )
             _cache_build_cv.wait_for(
-                lambda: not _cache_build_in_progress and _available_models_cache is not None,
-                timeout=60
+                lambda: not _cache_build_in_progress,
+                timeout=wait_timeout
             )
             cached = _get_fresh_memory_models_cache(time.monotonic())
-            if cached is not None:
+            if (
+                cached is not None
+                and (
+                    not force_refresh
+                    or (
+                        force_refresh_started_at is not None
+                        and _available_models_live_rebuild_ts >= force_refresh_started_at
+                    )
+                )
+            ):
                 return cached
+            if force_refresh and _LIVE_REBUILD_BUDGET_SECONDS > 0 and _cache_build_in_progress:
+                if stale_disk_groups is not None:
+                    return copy.deepcopy(stale_disk_groups)
+                return copy.deepcopy(_static_models_catalog_without_live_probes())
 
         # Reload config if changed
         if _cfg_changed:
             reload_config()
             _available_models_cache = None
             _available_models_cache_ts = 0.0
+            _available_models_live_rebuild_ts = 0.0
             _available_models_cache_source_fingerprint = None
             disk_groups = None
+            stale_disk_groups = None
 
         # Serve from memory cache if fresh
         now = time.monotonic()
         cached = _get_fresh_memory_models_cache(now)
         if cached is not None:
-            return cached
+            if not force_refresh:
+                return cached
+            if (
+                force_refresh_started_at is not None
+                and _available_models_live_rebuild_ts >= force_refresh_started_at
+            ):
+                return cached
+
+        # A concurrent forced refresh may have started after this caller sampled
+        # should_wait but before it acquired the lock. Reuse that in-flight build
+        # instead of launching another one, and preserve this caller's budget.
+        if (
+            force_refresh
+            and force_refresh_started_at is not None
+            and _cache_build_in_progress
+        ):
+            remaining_budget = None
+            if _LIVE_REBUILD_BUDGET_SECONDS > 0:
+                remaining_budget = max(
+                    0.0,
+                    _LIVE_REBUILD_BUDGET_SECONDS - (time.monotonic() - force_refresh_started_at),
+                )
+            if remaining_budget is None or remaining_budget > 0:
+                _cache_build_cv.wait_for(
+                    lambda: not _cache_build_in_progress,
+                    timeout=remaining_budget,
+                )
+                cached = _get_fresh_memory_models_cache(time.monotonic())
+                if (
+                    cached is not None
+                    and _available_models_live_rebuild_ts >= force_refresh_started_at
+                ):
+                    return cached
+            if _cache_build_in_progress and _LIVE_REBUILD_BUDGET_SECONDS > 0:
+                if stale_disk_groups is not None:
+                    return copy.deepcopy(stale_disk_groups)
+                return copy.deepcopy(_static_models_catalog_without_live_probes())
 
         # Cold path: disk cache hit — use it (fast, no lock contention)
-        if disk_groups is not None:
+        if disk_groups is not None and not force_refresh:
             _available_models_cache = disk_groups
             _available_models_cache_ts = now
             _available_models_cache_source_fingerprint = _models_cache_source_fingerprint()
-            _save_models_cache_to_disk(disk_groups)
             return copy.deepcopy(disk_groups)
 
         # ── prefer_cache: NEVER run the live provider rebuild ────────────────
@@ -6389,7 +7420,9 @@ def get_available_models(*, prefer_cache: bool = False) -> dict:
         if _LIVE_REBUILD_BUDGET_SECONDS <= 0:
             try:
                 # Foreground thread already carries the request-profile TLS;
-                # apply the profile env (no-op for default) for the live probe.
+                # apply the mirrored profile env (no-op for default) for the
+                # live probe because provider_model_ids() still has raw
+                # os.getenv()/HERMES_HOME readers on this synchronous path.
                 _sync_scope = (
                     _prof_env_request("models rebuild (sync)")
                     if _prof_env_request is not None
@@ -6404,12 +7437,17 @@ def get_available_models(*, prefer_cache: bool = False) -> dict:
                     _cache_build_cv.notify_all()
                 raise
             with _cache_build_cv:
+                published_at = time.monotonic()
                 _available_models_cache = result
-                _available_models_cache_ts = time.monotonic()
+                _available_models_cache_ts = published_at
+                _available_models_live_rebuild_ts = published_at
                 _available_models_cache_source_fingerprint = _models_cache_source_fingerprint()
-                _cache_build_in_progress = False
-                _cache_build_cv.notify_all()
-            _save_models_cache_to_disk(result)
+            try:
+                _save_models_cache_to_disk(result)
+            finally:
+                with _cache_build_cv:
+                    _cache_build_in_progress = False
+                    _cache_build_cv.notify_all()
             return copy.deepcopy(result)
 
         # ── Bounded rebuild (defense-in-depth) ───────────────────────────────
@@ -6443,19 +7481,24 @@ def get_available_models(*, prefer_cache: bool = False) -> dict:
 
         def _publish_models_result(result):
             global _cache_build_in_progress, _available_models_cache
-            global _available_models_cache_ts, _available_models_cache_source_fingerprint
+            global _available_models_cache_ts, _available_models_live_rebuild_ts
+            global _available_models_cache_source_fingerprint
             with _cache_build_cv:
+                published_at = time.monotonic()
                 _available_models_cache = result
-                _available_models_cache_ts = time.monotonic()
+                _available_models_cache_ts = published_at
+                _available_models_live_rebuild_ts = published_at
                 _available_models_cache_source_fingerprint = (
                     _models_cache_source_fingerprint()
                 )
-                _cache_build_in_progress = False
-                _cache_build_cv.notify_all()
             try:
                 _save_models_cache_to_disk(result)
             except Exception:
                 logger.debug("models cache disk save failed", exc_info=True)
+            finally:
+                with _cache_build_cv:
+                    _cache_build_in_progress = False
+                    _cache_build_cv.notify_all()
 
         def _clear_build_in_progress():
             global _cache_build_in_progress
@@ -6541,15 +7584,136 @@ def get_available_models(*, prefer_cache: bool = False) -> dict:
             logger.warning(_budget_log_msg, _LIVE_REBUILD_BUDGET_SECONDS)
         else:
             logger.info(_budget_log_msg, _LIVE_REBUILD_BUDGET_SECONDS)
-        # Note: ``disk_groups``, if non-None, was already consumed by the
-        # cold-path early-return at the "Cold path: disk cache hit" branch
-        # above (line ~4608). Any execution that reaches HERE necessarily
-        # took the live-rebuild branch, which means ``disk_groups is None``
-        # at this point — so we don't re-check it. Per Copilot review on
-        # PR #2971: the previous ``if disk_groups is not None`` branch
-        # here was dead code. Fall back directly to the static minimal
-        # catalog (no second disk read).
+        # ``stale_disk_groups`` is shape-valid but failed the strict metadata
+        # checks required for authoritative cold-path use. It was read before
+        # acquiring _available_models_cache_lock so this over-budget fallback
+        # does not extend the lock hold while the worker is ready to publish.
+        if stale_disk_groups is not None:
+            return copy.deepcopy(stale_disk_groups)
         return copy.deepcopy(_static_models_catalog_without_live_probes())
+
+
+def _models_cache_file_age_seconds(cache_path: Path, now: float) -> float | None:
+    try:
+        return max(0.0, now - cache_path.stat().st_mtime)
+    except OSError:
+        return None
+
+
+def get_available_models_for_session_visit() -> dict:
+    """Return /api/models with a short session-visit freshness horizon.
+
+    perf(session-load-latency) Phase 0: this function is the source of the
+    multi-second `/api/models?freshness=session_visit` latency. Stage markers
+    feed into RequestDiagnostics when called from /api/models; standalone
+    callers get the same envelope via the local _stagelog dict.
+    """
+    import time as _time
+    import logging as _logging
+    _stagelog: list[tuple[str, float]] = [("enter", _time.monotonic())]
+    def _mark(name: str) -> None:
+        _stagelog.append((name, _time.monotonic()))
+    _logger = _logging.getLogger("api.config")
+    # HERMES_DEBUG_SLOW: a numeric value sets the slow-log threshold in ms; any
+    # other non-empty (truthy) value — e.g. the documented `HERMES_DEBUG_SLOW=1`
+    # / `=true` — means "always log stage timing" (0ms threshold); unset/empty
+    # keeps the default 500ms. Must be non-throwing: a nonnumeric truthy value
+    # like `true` previously raised ValueError here and 500'd this hot path.
+    _slow_raw = (os.environ.get("HERMES_DEBUG_SLOW", "") or "").strip()
+    if not _slow_raw:
+        _slow_threshold_ms = 500.0
+    else:
+        try:
+            _slow_threshold_ms = float(_slow_raw) or 500.0
+        except ValueError:
+            # Non-numeric truthy flag (e.g. "true"): always emit stage timing.
+            _slow_threshold_ms = 0.0
+
+    global _available_models_cache, _available_models_cache_ts, _available_models_cache_source_fingerprint
+    cache_path = _get_models_cache_path()
+    cache_age = _models_cache_file_age_seconds(cache_path, time.time())
+    _mark(f"disk_age_check:{cache_age}")
+    disk_cached = None
+    if cache_age is not None and cache_age < _SESSION_VISIT_MODELS_FRESHNESS_SECONDS:
+        _mark("cache_age_within_ttl")
+        now_mono = time.monotonic()
+        with _available_models_cache_lock:
+            cached = _get_fresh_memory_models_cache(now_mono)
+            if cached is not None:
+                _mark("memory_cache_hit")
+                _maybe_log_slow_stages(_logger, _stagelog, _slow_threshold_ms, "models.session_visit")
+                return cached
+        _mark("memory_cache_miss_loading_disk")
+        disk_cached = _load_models_cache_from_disk()
+        if disk_cached is not None:
+            with _available_models_cache_lock:
+                cached = _get_fresh_memory_models_cache(time.monotonic())
+                if cached is not None:
+                    _mark("disk_then_memory_cache_hit")
+                    _maybe_log_slow_stages(_logger, _stagelog, _slow_threshold_ms, "models.session_visit")
+                    return cached
+                _available_models_cache = copy.deepcopy(disk_cached)
+                _available_models_cache_ts = time.monotonic()
+                _available_models_cache_source_fingerprint = _models_cache_source_fingerprint()
+            _mark("disk_cache_returned")
+            _maybe_log_slow_stages(_logger, _stagelog, _slow_threshold_ms, "models.session_visit")
+            return copy.deepcopy(disk_cached)
+
+    _mark("cache_age_stale_or_missing")
+    stale_cached = disk_cached or _load_stale_models_cache_from_disk()
+    _mark(f"stale_cached_loaded:{bool(stale_cached)}")
+    try:
+        _mark("force_refresh_start")
+        result = get_available_models(force_refresh=True)
+        _mark("force_refresh_done")
+        _maybe_log_slow_stages(_logger, _stagelog, _slow_threshold_ms, "models.session_visit")
+        return result
+    except Exception:
+        _mark("force_refresh_failed")
+        logger.debug("session-visit models refresh failed", exc_info=True)
+        if stale_cached is not None:
+            _mark("stale_fallback_return")
+            _maybe_log_slow_stages(_logger, _stagelog, _slow_threshold_ms, "models.session_visit")
+            return copy.deepcopy(stale_cached)
+        _mark("prefer_cache_fallback")
+        _maybe_log_slow_stages(_logger, _stagelog, _slow_threshold_ms, "models.session_visit")
+        return get_available_models(prefer_cache=True)
+
+
+def _maybe_log_slow_stages(
+    logger_obj: "logging.Logger",
+    stagelog: "list[tuple[str, float]]",
+    threshold_ms: float,
+    tag: str,
+) -> None:
+    """perf(session-load-latency) Phase 0: per-stage timing reporter.
+
+    Emits a single log line listing every stage with its delta in ms when
+    the function's total wall time crosses ``threshold_ms``. Lives next to
+    the model cache code so it has zero coupling with the WebUI request
+    layer; called from both ``get_available_models_for_session_visit`` and
+    (Phase 1) the chat session load path.
+    """
+    if len(stagelog) < 2:
+        return
+    total_ms = (stagelog[-1][1] - stagelog[0][1]) * 1000.0
+    if total_ms < threshold_ms:
+        return
+    parts: list[str] = []
+    for i in range(1, len(stagelog)):
+        prev_t = stagelog[i - 1][1]
+        cur_t = stagelog[i][1]
+        parts.append(f"{stagelog[i][0]}={((cur_t - prev_t) * 1000.0):.1f}ms")
+    try:
+        logger_obj.warning(
+            "[SLOW] %s total=%.1fms stages: %s",
+            tag,
+            total_ms,
+            " ".join(parts),
+        )
+    except Exception:
+        # Logging must never break a response path.
+        pass
 
 
 # ── Static file path ─────────────────────────────────────────────────────────
@@ -6557,10 +7721,47 @@ _INDEX_HTML_PATH = REPO_ROOT / "static" / "index.html"
 
 # ── Thread synchronisation ───────────────────────────────────────────────────
 LOCK = threading.Lock()
-# Max compact Session objects held in the in-memory LRU (issue #3506). Lighter
-# than the agent cache (no live agent runtime), but still bounded and operator-
-# tunable via HERMES_WEBUI_SESSIONS_MAX for installs with hundreds of sessions.
-SESSIONS_MAX = _env_int("HERMES_WEBUI_SESSIONS_MAX", 100)
+# Max compact Session objects held in the in-memory LRU (issue #3506, #4765).
+# Lighter than the agent cache (no live agent runtime), but still bounded so a
+# long-running self-hosted install cannot accumulate every session it ever
+# touched in RAM and eventually segfault (the #4765/#2233/#4633 crash cluster).
+#
+# Precedence for the effective cap is resolved by get_sessions_cache_max():
+#   1. config.yaml  webui.sessions_cache_max   (preferred, no new env var)
+#   2. HERMES_WEBUI_SESSIONS_MAX env var        (legacy operator override)
+#   3. DEFAULT_SESSIONS_CACHE_MAX               (sane bounded default)
+DEFAULT_SESSIONS_CACHE_MAX = 300
+SESSIONS_MAX = _env_int("HERMES_WEBUI_SESSIONS_MAX", DEFAULT_SESSIONS_CACHE_MAX)
+
+
+def get_sessions_cache_max(config_data: dict | None = None) -> int:
+    """Return the effective in-memory SESSIONS cache cap (issue #4765).
+
+    The bound is configurable through ``webui.sessions_cache_max`` in
+    ``config.yaml`` so operators of large self-hosted installs can size the
+    cache without editing source or adding a new ``HERMES_*`` env var (this
+    project forbids new env vars for non-secret config). A missing, empty,
+    non-numeric, or below-1 value falls back to the legacy
+    ``HERMES_WEBUI_SESSIONS_MAX`` env override, then to
+    ``DEFAULT_SESSIONS_CACHE_MAX`` — a typo can never disable the bound and
+    reintroduce unbounded memory growth.
+    """
+    active_cfg = config_data if isinstance(config_data, dict) else get_config()
+    webui_cfg = active_cfg.get("webui", {}) if isinstance(active_cfg, dict) else {}
+    if isinstance(webui_cfg, dict):
+        raw = webui_cfg.get("sessions_cache_max")
+        if raw is not None:
+            try:
+                value = int(raw)
+            except (TypeError, ValueError):
+                value = None
+            if value is not None and value >= 1:
+                return value
+    # config.yaml did not specify a valid cap: honor the legacy env override
+    # (already parsed into SESSIONS_MAX) and finally the hardened default.
+    if isinstance(SESSIONS_MAX, int) and SESSIONS_MAX >= 1:
+        return SESSIONS_MAX
+    return DEFAULT_SESSIONS_CACHE_MAX
 CHAT_LOCK = threading.Lock()
 
 
@@ -6642,6 +7843,10 @@ def create_stream_channel() -> StreamChannel:
 
 STREAMS: dict = {}
 STREAMS_LOCK = threading.Lock()
+# stream_id -> session_id owner, populated synchronously before worker startup so
+# stream-id authorization does not depend on worker lifecycle registration.
+STREAM_SESSION_OWNERS: dict = {}
+STREAM_SESSION_OWNERS_LOCK = threading.Lock()
 CANCEL_FLAGS: dict = {}
 AGENT_INSTANCES: dict = {}  # stream_id -> AIAgent instance for interrupt propagation
 STREAM_PARTIAL_TEXT: dict = {}  # stream_id -> partial assistant text accumulated during streaming
@@ -6651,6 +7856,37 @@ STREAM_GOAL_RELATED: dict = {}  # stream_id -> bool: only evaluate goal for goal
 STREAM_LAST_EVENT_ID: dict = {}  # stream_id -> latest journal event_id for `id:` field on live SSE frames (stage-364)
 PENDING_GOAL_CONTINUATION: set = set()  # session_ids awaiting a goal continuation turn (#1932)
 
+
+def register_stream_owner(stream_id: str, session_id: str) -> None:
+    """Record the session that owns a stream before worker startup."""
+    stream_id = str(stream_id or "").strip()
+    session_id = str(session_id or "").strip()
+    if not stream_id or not session_id:
+        return
+    with STREAM_SESSION_OWNERS_LOCK:
+        STREAM_SESSION_OWNERS[stream_id] = session_id
+
+
+def stream_owner_session_id(stream_id: str) -> str | None:
+    """Return the synchronously-recorded owner session for a stream, if any."""
+    stream_id = str(stream_id or "").strip()
+    if not stream_id:
+        return None
+    with STREAM_SESSION_OWNERS_LOCK:
+        owner = STREAM_SESSION_OWNERS.get(stream_id)
+    owner = str(owner or "").strip()
+    return owner or None
+
+
+def unregister_stream_owner(stream_id: str) -> None:
+    """Forget the pre-worker stream owner once the stream has torn down."""
+    stream_id = str(stream_id or "").strip()
+    if not stream_id:
+        return
+    with STREAM_SESSION_OWNERS_LOCK:
+        STREAM_SESSION_OWNERS.pop(stream_id, None)
+
+
 # ── Gateway capability cache ─────────────────────────────────────────────────
 # Probes /v1/capabilities once per base_url/api-key pair and caches the result
 # for 60 s so guarded-turn routing decisions do not add latency on every chat
@@ -6658,6 +7894,15 @@ PENDING_GOAL_CONTINUATION: set = set()  # session_ids awaiting a goal continuati
 _GATEWAY_CAPS_CACHE: dict[tuple[str, str], dict] = {}
 _GATEWAY_CAPS_LOCK = threading.Lock()
 _GATEWAY_CAPS_TTL_S: float = 60.0
+
+
+def _gateway_caps_probe_timed_out(exc: BaseException) -> bool:
+    """Keep slow capability probes on the legacy reachable-but-unsupported path."""
+    reason = exc.reason if isinstance(exc, urllib.error.URLError) else exc
+    if isinstance(reason, (TimeoutError, socket.timeout)):
+        return True
+    reason_text = str(reason).lower()
+    return "timed out" in reason_text or "timeout" in reason_text
 
 
 def get_gateway_caps(base_url: str, api_key: str = "") -> dict:
@@ -6670,21 +7915,40 @@ def get_gateway_caps(base_url: str, api_key: str = "") -> dict:
         cached = _GATEWAY_CAPS_CACHE.get(cache_key)
         if cached and now - cached.get("fetched_at", 0) < _GATEWAY_CAPS_TTL_S:
             return cached
-    caps = {"approval_events": False, "run_approval_response": False, "fetched_at": 0.0}
+    caps = {
+        "approval_events": False,
+        "run_approval_response": False,
+        "capabilities_reachable": False,
+        "probe_error": None,
+        "fetched_at": 0.0,
+    }
     try:
         headers = {}
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
         req = urllib.request.Request(f"{base_url}/v1/capabilities", headers=headers, method="GET")
         with urllib.request.urlopen(req, timeout=3) as resp:
+            caps["capabilities_reachable"] = True
             body = json.loads(resp.read(65536))
         features = body.get("features") if isinstance(body, dict) else {}
         if not isinstance(features, dict):
             features = {}
         caps["approval_events"] = bool(features.get("approval_events"))
         caps["run_approval_response"] = bool(features.get("run_approval_response"))
-    except Exception:
-        pass
+    except urllib.error.HTTPError as exc:
+        caps["capabilities_reachable"] = True
+        caps["probe_error"] = f"{type(exc).__name__}: {exc}"
+    except urllib.error.URLError as exc:
+        if _gateway_caps_probe_timed_out(exc):
+            caps["capabilities_reachable"] = True
+        caps["probe_error"] = f"{type(exc).__name__}: {exc}"
+    except (TimeoutError, socket.timeout) as exc:
+        caps["capabilities_reachable"] = True
+        caps["probe_error"] = f"{type(exc).__name__}: {exc}"
+    except OSError as exc:
+        caps["probe_error"] = f"{type(exc).__name__}: {exc}"
+    except Exception as exc:
+        caps["probe_error"] = f"{type(exc).__name__}: {exc}"
     with _GATEWAY_CAPS_LOCK:
         current = _GATEWAY_CAPS_CACHE.get(cache_key)
         if current and current.get("fetched_at", 0) > probe_started_at:
@@ -6692,6 +7956,16 @@ def get_gateway_caps(base_url: str, api_key: str = "") -> dict:
         caps["fetched_at"] = time.time()
         _GATEWAY_CAPS_CACHE[cache_key] = caps
     return caps
+
+
+def gateway_approval_unavailable_reason(base_url: str, api_key: str = "") -> str | None:
+    """Return why approval support is unavailable, if it is unavailable."""
+    caps = get_gateway_caps(base_url, api_key)
+    if bool(caps.get("approval_events") and caps.get("run_approval_response")):
+        return None
+    if not caps.get("capabilities_reachable"):
+        return "unreachable"
+    return "unsupported"
 
 
 def gateway_supports_approval(base_url: str, api_key: str = "") -> bool:
@@ -6796,6 +8070,7 @@ def unregister_active_run(stream_id: str) -> None:
     with ACTIVE_RUNS_LOCK:
         ACTIVE_RUNS.pop(stream_id, None)
         LAST_RUN_FINISHED_AT = time.time()
+    unregister_stream_owner(stream_id)
 
 # Agent cache: reuse AIAgent across messages in the same WebUI session so that
 # _user_turn_count survives between turns.  This mirrors the gateway's
@@ -6830,6 +8105,25 @@ def _evict_session_agent(session_id: str) -> None:
             agent = entry[0] if isinstance(entry, tuple) else None
     if agent is None:
         return
+    # A live run for this session may still hold this agent's _session_db (the
+    # worker assigns agent._session_db at run start). Never close it out from
+    # under an in-flight turn — ACTIVE_RUNS is the authoritative liveness signal
+    # (mirrors the worker's own LRU-eviction guard in streaming.py). When a run
+    # is live we still drop the cache handle above (harmless — the worker holds
+    # a local ref), but skip the lifecycle commit + _session_db.close() so the
+    # running turn can finish persisting. Hardens /clear + model-switch eviction
+    # too, not just truncate (#5096 Bug D).
+    _run_active = False
+    try:
+        with ACTIVE_RUNS_LOCK:
+            for _entry in (ACTIVE_RUNS or {}).values():
+                if (_entry or {}).get("session_id") == session_id:
+                    _run_active = True
+                    break
+    except Exception:
+        _run_active = False
+    if _run_active:
+        return
     should_close = True
     try:
         from api.session_lifecycle import commit_session_memory, discard_session, has_uncommitted_work, unregister_agent
@@ -6852,7 +8146,9 @@ def _evict_session_agent(session_id: str) -> None:
             logger.debug("Failed to close _session_db on eviction for %s", session_id, exc_info=True)
 
 # ── Thread-local env context ─────────────────────────────────────────────────
-_thread_ctx = threading.local()
+# (_thread_ctx + _thread_local_env_value are defined near the top of this module,
+# above the config-file section, so _expand_env_vars can reference them at the
+# import-time reload_config() without a forward-reference NameError.)
 
 
 def _set_thread_env(**kwargs):
@@ -6899,30 +8195,64 @@ def _get_session_agent_lock(session_id: str) -> threading.Lock:
 _SETTINGS_DEFAULTS = {
     "default_workspace": str(DEFAULT_WORKSPACE),
     "onboarding_completed": False,
-    "send_key": "enter",  # 'enter' or 'ctrl+enter'
+    "send_key": "enter",  # 'enter', 'ctrl+enter', or 'shift+enter'
     "show_token_usage": False,  # show input/output token badge below assistant messages
     "show_quota_chip": False,  # show ambient provider quota chip in composer footer (default off; wide desktop only when enabled, see style.css @media)
     "show_conversation_outline": False,  # show opt-in desktop jump-to-question outline panel
+    "show_busy_placeholder_hint": False,  # opt-in busy composer placeholder hint
     "hide_empty_state_suggestions": False,  # hide the default new-chat suggestion buttons
     "virtualize_transcript": False,  # #4343: virtualize long (>80 msg) transcripts. EXPERIMENTAL, opt-IN (default OFF). Was opt-out/default-on in #4325 but caused scroll-up flicker on long sessions with tall tool-call rows (variable-height anchor oscillation) — flipped off for everyone in #4343; re-enabling requires an explicit opt-in (see virtualize_transcript_optin migration in load_settings).
     "virtualize_transcript_optin": False,  # #4343 migration marker: True only once the user explicitly enables virtualize_transcript AFTER the default-off flip. A stored virtualize_transcript=True WITHOUT this marker is a stale pre-flip value and is reset to False on load (force-off-for-everyone migration).
     "show_tps": False,  # show tokens-per-second chip in assistant message headers
     "fade_text_effect": False,  # animate newly streamed words with a lightweight fade-in effect
     "show_cli_sessions": True,  # merge CLI/TUI/messaging sessions from state.db into the sidebar by default (#3988); established installs are grandfathered OFF by the load_settings backfill
+    "show_claude_code_sessions": True,  # allow filtering Claude Code rows without hiding other imported sources
     "show_cron_sessions": False,  # surface cron sessions in the sidebar (subordinate to show_cli_sessions)
+    "show_webhook_sessions": False,  # surface webhook sessions in the sidebar (subordinate to show_cli_sessions)
     "show_previous_messaging_sessions": False,  # show older Telegram/Discord/etc. reset segments
     "sync_to_insights": False,  # mirror WebUI token usage to state.db for /insights
     "check_for_updates": True,  # check if webui/agent repos are behind upstream
     "ignore_agent_updates": False,  # keep WebUI update notices but suppress Agent update checks
     "whats_new_summary_enabled": False,  # show an LLM-written What's New summary before diff links
+    "tts_enabled": False,
+    "tts_auto_read": False,
+    "tts_engine": "browser",
+    "tts_voice": "",
+    "tts_rate": 1.0,
+    "tts_pitch": 1.0,
+    "voice_mode_button": False,
+    "voice_continuous": False,
+    "voice_silence_ms": 1800,
+    "raw_audio_mode": False,
     "theme": "dark",  # light | dark | system
     "skin": "default",  # accent color skin: default | ares | mono | graphite | slate | poseidon | sisyphus | charizard | sienna | catppuccin | nous
     "font_size": "default",  # small | default | large | xlarge
     "session_jump_buttons": False,  # show Start/End transcript jump pills
+    "render_user_markdown": False,  # opt-in: render full markdown in user messages (#3870)
+    "large_text_paste_as_attachment": True,  # convert very large composer text pastes into .md attachments by default
+    "project_quick_create_buttons": False,  # opt-in: show per-project "+" quick-create buttons on sidebar project chips (#4676)
+    "structured_code_default_view": "auto",  # JSON/YAML fenced-block default render: auto | on | off (#484 follow-up). auto => Tree when line count >= structured_code_auto_tree_lines, else Raw.
+    "structured_code_auto_tree_lines": 10,  # in 'auto' mode, minimum line count to default a JSON/YAML block to Tree view (preserves the original hardcoded >=10 behavior)
     "session_endless_scroll": False,  # auto-load older transcript pages while scrolling upward
     "chat_activity_display_mode": "compact_worklog",  # compact_worklog | transparent_stream
     "auto_scroll_follow": True,  # follow new output to the bottom while streaming (Codex/Claude-Code-style sticky bottom); the user scrolling up unpins and is respected
     "worklog_details_expanded_default": False,  # opt-in: expand Worklog details by default; default remains folded
+    "hide_composer_attach": False,  # hide attach button in composer footer
+    "hide_composer_saved_prompts": False,  # hide saved prompts button in composer footer
+    "hide_composer_mic": False,  # hide dictation mic button in composer footer
+    "show_titlebar_profile": False,  # show profile switcher in app titlebar (opt-in)
+    "hide_composer_voice_mode": False,  # hide hands-free voice-mode button in composer footer
+    "hide_composer_yolo": False,  # hide YOLO chip in composer footer
+    "hide_composer_profile": False,  # hide profile chip in composer footer
+    "hide_composer_workspace": False,  # hide workspace controls in composer footer/mobile config panel
+    "hide_composer_mobile_config": False,  # hide mobile composer config button
+    "hide_composer_model": False,  # hide model chip in composer footer/mobile config panel
+    "hide_composer_quota_chip": False,  # hide provider quota chip in composer footer
+    "hide_composer_reasoning": False,  # hide reasoning chip in composer footer/mobile config panel
+    "hide_composer_toolsets": False,  # hide toolsets chip in composer footer
+    "hide_composer_status": False,  # hide status text in composer footer
+    "hide_composer_context": False,  # hide context indicator in composer footer/mobile config panel
+    "hide_composer_bg_badge": False,  # hide background-jobs badge in composer footer
     "pinned_sessions_limit": 3,  # maximum active pinned sessions shown in the sidebar
     "inflight_state_max_sessions": 8,  # max active-stream recovery snapshots kept in browser localStorage
     "inflight_state_max_messages": 24,  # max recent messages kept per recovery snapshot
@@ -6931,6 +8261,7 @@ _SETTINGS_DEFAULTS = {
     "inflight_state_max_json_chars": 1500000,  # max serialized recovery snapshot payload before pruning
     "hidden_tabs": [],  # sidebar tab panel names hidden by user (e.g. ["tasks","kanban"]); chat and settings are always visible
     "tab_order": [],  # user-defined sidebar/rail tab order for reorderable tabs; chat/settings stay fixed
+    "composer_control_order": [],  # user-defined composer footer control order; invalid/duplicate keys are ignored
     "language": "en",  # UI locale code; must match a key in static/i18n.js LOCALES
     "bot_name": os.getenv(
         "HERMES_WEBUI_BOT_NAME", "Hermes"
@@ -6946,15 +8277,33 @@ _SETTINGS_DEFAULTS = {
     "dashboard_plugins": {},  # plugin_name -> bool, opt-in per plugin (default off per PF-10b)
     "sidebar_density": "compact",  # compact | detailed
     "auto_title_refresh_every": "0",  # adaptive title refresh: 0=off, 5/10/20=every N exchanges
-    "busy_input_mode": "queue",  # behavior when sending while agent is running: queue | interrupt | steer
+    "default_message_mode": "steer",  # behavior when sending while agent is running: queue | interrupt | steer
     "password_hash": None,  # PBKDF2-HMAC-SHA256 hash; None = auth disabled
+    "auth_disabled_acknowledged": False,  # user acknowledged unauthenticated risk
+    "provider_cost_budget": None,
 }
+_SETTINGS_SPEECH_KEYS = {
+    "tts_enabled",
+    "tts_auto_read",
+    "tts_engine",
+    "tts_voice",
+    "tts_rate",
+    "tts_pitch",
+    "voice_mode_button",
+    "voice_continuous",
+    "voice_silence_ms",
+    "raw_audio_mode",
+}
+_SETTINGS_PERSISTED_SPEECH_KEYS_FIELD = "persisted_speech_keys"
 _SETTINGS_LEGACY_DROP_KEYS = {
     "assistant_language",
     "bubble_layout",
     "default_model",
     "activity_feed_expanded_default",
     "simplified_tool_calling",
+}
+_COMPOSER_CONTROL_ORDER_KEYS = {
+    key for key in _SETTINGS_DEFAULTS if key.startswith("hide_composer_")
 }
 _SETTINGS_THEME_VALUES = {"light", "dark", "system"}
 _SETTINGS_SKIN_VALUES = {
@@ -6972,6 +8321,8 @@ _SETTINGS_SKIN_VALUES = {
     "geist-contrast",
     "zeus",
     "verdigris",
+    "neon-soft",
+    "neon-paint",
 }
 _SETTINGS_LEGACY_THEME_MAP = {
     # Legacy full themes now map onto the closest supported theme + accent skin pair.
@@ -7021,69 +8372,104 @@ def _normalize_appearance(theme, skin) -> tuple[str, str]:
     return next_theme, next_skin
 
 
+def _read_raw_settings_file() -> dict:
+    """Read settings.json without applying defaults."""
+    try:
+        if not SETTINGS_FILE.exists():
+            return {}
+    except OSError:
+        # PermissionError or other OS-level error (e.g. UID mismatch in Docker)
+        # Treat as missing rather than failing startup.
+        logger.debug("Cannot stat settings file %s (inaccessible?)", SETTINGS_FILE)
+        return {}
+
+    try:
+        loaded = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        logger.debug("Failed to load settings from %s", SETTINGS_FILE)
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
+
+
+def _extract_persisted_speech_keys(stored: dict) -> set[str]:
+    if not isinstance(stored, dict):
+        return set()
+    return {key for key in _SETTINGS_SPEECH_KEYS if key in stored}
+
+
+def persisted_speech_settings_keys() -> list[str]:
+    return sorted(_extract_persisted_speech_keys(_read_raw_settings_file()))
+
+
+def _settings_payload_for_write(settings: dict, persisted_speech_keys: set[str]) -> dict:
+    persisted = {
+        k: v
+        for k, v in settings.items()
+        if k not in {"default_model", _SETTINGS_PERSISTED_SPEECH_KEYS_FIELD}
+    }
+    for speech_key in _SETTINGS_SPEECH_KEYS:
+        if speech_key not in persisted_speech_keys:
+            persisted.pop(speech_key, None)
+    return persisted
+
+
 def load_settings() -> dict:
     """Load settings from disk, merging with defaults for any missing keys."""
     settings = dict(_SETTINGS_DEFAULTS)
-    stored = None
-    try:
-        settings_exists = SETTINGS_FILE.exists()
-    except OSError:
-        # PermissionError or other OS-level error (e.g. UID mismatch in Docker)
-        # Treat as missing — start with defaults rather than crashing.
-        logger.debug("Cannot stat settings file %s (inaccessible?)", SETTINGS_FILE)
-        settings_exists = False
-    if settings_exists:
-        try:
-            stored = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
-            if isinstance(stored, dict):
-                if (
-                    "worklog_details_expanded_default" not in stored
-                    and "activity_feed_expanded_default" in stored
-                ):
-                    settings["worklog_details_expanded_default"] = bool(
-                        stored.get("activity_feed_expanded_default")
-                    )
-                settings.update(
-                    {
-                        k: v
-                        for k, v in stored.items()
-                        if k not in _SETTINGS_LEGACY_DROP_KEYS
-                    }
-                )
-                # Grandfather established installs OFF for show_cli_sessions (#3988).
-                # The default flipped True so NEW users see CLI/TUI/messaging
-                # sessions without hunting for the toggle — but an existing user
-                # who never opted in should not have their sidebar silently change.
-                # Treat the install as established (and pin the old False default)
-                # when show_cli_sessions is absent AND the file already carries
-                # real user state — either onboarding was completed, or some
-                # setting OTHER than a not-yet-completed onboarding flag has been
-                # persisted. Keying on "has saved user state" (not just
-                # onboarding_completed) also covers a CLI-configured user who
-                # tweaked a WebUI setting before running the wizard. A genuinely
-                # new / still-mid-onboarding file falls through to the True default.
-                _established_keys = [
-                    k for k in stored
-                    if k not in ("show_cli_sessions", "onboarding_completed")
-                ]
-                if "show_cli_sessions" not in stored and (
-                    bool(stored.get("onboarding_completed")) or _established_keys
-                ):
-                    settings["show_cli_sessions"] = False
-                # Force-off-for-everyone migration for virtualize_transcript (#4343).
-                # The feature shipped opt-OUT/default-on in #4325, then proved to
-                # cause scroll-up flicker on long sessions (variable-height anchor
-                # oscillation). It is now EXPERIMENTAL/opt-IN (default off). Any
-                # stored virtualize_transcript=True from the #4325 window is a stale
-                # pre-flip value and must be reset to off, so 100% of existing users
-                # land on off — re-enabling requires an explicit opt-in made AFTER
-                # the flip, which writes virtualize_transcript_optin=True alongside.
-                # Honor a stored True only when that marker is present.
-                if not bool(stored.get("virtualize_transcript_optin")):
-                    settings["virtualize_transcript"] = False
-
-        except Exception:
-            logger.debug("Failed to load settings from %s", SETTINGS_FILE)
+    stored = _read_raw_settings_file()
+    if isinstance(stored, dict):
+        if (
+            "worklog_details_expanded_default" not in stored
+            and "activity_feed_expanded_default" in stored
+        ):
+            settings["worklog_details_expanded_default"] = bool(
+                stored.get("activity_feed_expanded_default")
+            )
+        settings.update(
+            {
+                k: v
+                for k, v in stored.items()
+                if k not in _SETTINGS_LEGACY_DROP_KEYS
+                and k != _SETTINGS_PERSISTED_SPEECH_KEYS_FIELD
+            }
+        )
+        if (
+            "default_message_mode" not in stored
+            and "busy_input_mode" in stored
+        ):
+            settings["default_message_mode"] = stored.get("busy_input_mode")
+        settings.pop("busy_input_mode", None)
+        # Grandfather established installs OFF for show_cli_sessions (#3988).
+        # The default flipped True so NEW users see CLI/TUI/messaging
+        # sessions without hunting for the toggle — but an existing user
+        # who never opted in should not have their sidebar silently change.
+        # Treat the install as established (and pin the old False default)
+        # when show_cli_sessions is absent AND the file already carries
+        # real user state — either onboarding was completed, or some
+        # setting OTHER than a not-yet-completed onboarding flag has been
+        # persisted. Keying on "has saved user state" (not just
+        # onboarding_completed) also covers a CLI-configured user who
+        # tweaked a WebUI setting before running the wizard. A genuinely
+        # new / still-mid-onboarding file falls through to the True default.
+        _established_keys = [
+            k for k in stored
+            if k not in ("show_cli_sessions", "onboarding_completed")
+        ]
+        if "show_cli_sessions" not in stored and (
+            bool(stored.get("onboarding_completed")) or _established_keys
+        ):
+            settings["show_cli_sessions"] = False
+        # Force-off-for-everyone migration for virtualize_transcript (#4343).
+        # The feature shipped opt-OUT/default-on in #4325, then proved to
+        # cause scroll-up flicker on long sessions (variable-height anchor
+        # oscillation). It is now EXPERIMENTAL/opt-IN (default off). Any
+        # stored virtualize_transcript=True from the #4325 window is a stale
+        # pre-flip value and must be reset to off, so 100% of existing users
+        # land on off — re-enabling requires an explicit opt-in made AFTER
+        # the flip, which writes virtualize_transcript_optin=True alongside.
+        # Honor a stored True only when that marker is present.
+        if not bool(stored.get("virtualize_transcript_optin")):
+            settings["virtualize_transcript"] = False
     settings["theme"], settings["skin"] = _normalize_appearance(
         stored.get("theme") if isinstance(stored, dict) else settings.get("theme"),
         stored.get("skin") if isinstance(stored, dict) else settings.get("skin"),
@@ -7104,12 +8490,13 @@ _SETTINGS_ALLOWED_KEYS = set(_SETTINGS_DEFAULTS.keys()) - {
     "simplified_tool_calling",
 }
 _SETTINGS_ENUM_VALUES = {
-    "send_key": {"enter", "ctrl+enter"},
+    "send_key": {"enter", "ctrl+enter", "shift+enter"},
     "sidebar_density": {"compact", "detailed"},
     "font_size": {"small", "default", "large", "xlarge"},
     "auto_title_refresh_every": {"0", "5", "10", "20"},
-    "busy_input_mode": {"queue", "interrupt", "steer"},
+    "default_message_mode": {"queue", "interrupt", "steer"},
     "chat_activity_display_mode": {"compact_worklog", "transparent_stream"},
+    "structured_code_default_view": {"auto", "on", "off"},
 }
 _SETTINGS_INT_RANGES = {
     "pinned_sessions_limit": (1, 99),
@@ -7118,24 +8505,38 @@ _SETTINGS_INT_RANGES = {
     "inflight_state_max_tool_calls": (1, 200),
     "inflight_state_max_string_chars": (1000, 500000),
     "inflight_state_max_json_chars": (100000, 4000000),
+    "structured_code_auto_tree_lines": (1, 1000),
+    "voice_silence_ms": (200, 60000),
+}
+_SETTINGS_FLOAT_RANGES = {
+    "tts_rate": (0.5, 2.0),
+    "tts_pitch": (0.0, 2.0),
 }
 _SETTINGS_BOOL_KEYS = {
     "onboarding_completed",
     "show_token_usage",
     "show_quota_chip",
     "show_conversation_outline",
+    "show_busy_placeholder_hint",
     "hide_empty_state_suggestions",
     "virtualize_transcript",
     "virtualize_transcript_optin",
     "show_tps",
     "fade_text_effect",
     "show_cli_sessions",
+    "show_claude_code_sessions",
     "show_cron_sessions",
+    "show_webhook_sessions",
     "show_previous_messaging_sessions",
     "sync_to_insights",
     "check_for_updates",
     "ignore_agent_updates",
     "whats_new_summary_enabled",
+    "tts_enabled",
+    "tts_auto_read",
+    "voice_mode_button",
+    "voice_continuous",
+    "raw_audio_mode",
     "sound_enabled",
     "rtl",
     "notifications_enabled",
@@ -7144,17 +8545,55 @@ _SETTINGS_BOOL_KEYS = {
     "workspace_todos_tab",
     "api_redact_enabled",
     "session_jump_buttons",
+    "render_user_markdown",
+    "large_text_paste_as_attachment",
+    "project_quick_create_buttons",
     "session_endless_scroll",
     "auto_scroll_follow",
     "worklog_details_expanded_default",
+    "auth_disabled_acknowledged",
+    "hide_composer_attach",
+    "hide_composer_saved_prompts",
+    "hide_composer_mic",
+    "show_titlebar_profile",
+    "hide_composer_voice_mode",
+    "hide_composer_yolo",
+    "hide_composer_profile",
+    "hide_composer_workspace",
+    "hide_composer_mobile_config",
+    "hide_composer_model",
+    "hide_composer_quota_chip",
+    "hide_composer_reasoning",
+    "hide_composer_toolsets",
+    "hide_composer_status",
+    "hide_composer_context",
+    "hide_composer_bg_badge",
 }
 # Language codes are validated as short alphanumeric BCP-47-like tags (e.g. 'en', 'zh', 'fr')
 _SETTINGS_LANG_RE = __import__("re").compile(r"^[a-zA-Z]{2,10}(-[a-zA-Z0-9]{2,8})?$")
+_SETTINGS_TTS_ENGINE_RE = __import__("re").compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$")
+
+_SETTINGS_WRITE_VERSION = 0
+_SETTINGS_WRITE_LOCK = __import__("threading").Lock()
+
+
+def _coerce_provider_cost_budget(value: Any) -> float | None:
+    """Normalize a monthly budget to the persisted two-decimal representation."""
+    try:
+        rounded = round(float(value), 2)
+    except (TypeError, ValueError):
+        return None
+    if not (0 < rounded < 1e9) or not math.isfinite(rounded):
+        return None
+    return rounded
 
 
 def save_settings(settings: dict) -> dict:
     """Save settings to disk. Returns the merged settings. Ignores unknown keys."""
+    raw_settings = _read_raw_settings_file()
+    persisted_speech_keys = _extract_persisted_speech_keys(raw_settings)
     current = load_settings()
+    applied_speech_keys: set[str] = set()
     if (
         "worklog_details_expanded_default" not in settings
         and "activity_feed_expanded_default" in settings
@@ -7163,6 +8602,12 @@ def save_settings(settings: dict) -> dict:
             "activity_feed_expanded_default"
         )
     settings.pop("activity_feed_expanded_default", None)
+    if (
+        "default_message_mode" not in settings
+        and "busy_input_mode" in settings
+    ):
+        settings["default_message_mode"] = settings.get("busy_input_mode")
+    settings.pop("busy_input_mode", None)
     settings.pop("simplified_tool_calling", None)
     pending_theme = current.get("theme")
     pending_skin = current.get("skin")
@@ -7191,6 +8636,7 @@ def save_settings(settings: dict) -> dict:
             current_dash.update({k: bool(v) for k, v in _dashboard_plugins.items() if isinstance(k, str)})
             current["dashboard_plugins"] = current_dash
     for k, v in settings.items():
+        key_is_speech = k in _SETTINGS_SPEECH_KEYS
         # dashboard_plugins is deep-merged above (not a flat allowlisted scalar).
         if k == "dashboard_plugins":
             continue
@@ -7217,15 +8663,32 @@ def save_settings(settings: dict) -> dict:
                 min_value, max_value = _SETTINGS_INT_RANGES[k]
                 if v < min_value or v > max_value:
                     continue
+            if k in _SETTINGS_FLOAT_RANGES:
+                try:
+                    v = float(v)
+                except (TypeError, ValueError):
+                    continue
+                min_value, max_value = _SETTINGS_FLOAT_RANGES[k]
+                if not math.isfinite(v) or v < min_value or v > max_value:
+                    continue
+            if k == "tts_engine":
+                if not isinstance(v, str):
+                    continue
+                v = v.strip()
+                if not _SETTINGS_TTS_ENGINE_RE.match(v):
+                    continue
+            if k == "tts_voice":
+                if not isinstance(v, str) or len(v) > 200 or "\x00" in v:
+                    continue
             # Validate language codes (BCP-47-like: 'en', 'zh', 'fr', 'zh-CN')
             if k == "language" and (
                 not isinstance(v, str) or not _SETTINGS_LANG_RE.match(v)
             ):
                 continue
-            # Validate list-valued sidebar tab settings. Chat/settings stay fixed
-            # even if a tampered POST tries to persist them, and duplicates are
-            # collapsed while preserving the first requested order.
-            if k in {"hidden_tabs", "tab_order"}:
+            # Validate list-valued ordering settings. Chat/settings stay fixed
+            # for tabs; composer ordering only accepts known control keys.
+            # Duplicates are collapsed while preserving the first requested order.
+            if k in {"hidden_tabs", "tab_order", "composer_control_order"}:
                 if not isinstance(v, list):
                     continue
                 seen = set()
@@ -7234,15 +8697,30 @@ def save_settings(settings: dict) -> dict:
                     if not isinstance(s, str):
                         continue
                     s = s.strip()
-                    if not s or s in {"chat", "settings"} or s in seen:
+                    if not s or s in seen:
+                        continue
+                    if k in {"hidden_tabs", "tab_order"} and s in {"chat", "settings"}:
+                        continue
+                    if k == "composer_control_order" and s not in _COMPOSER_CONTROL_ORDER_KEYS:
                         continue
                     seen.add(s)
                     cleaned.append(s)
                 v = cleaned
+            if k == "provider_cost_budget":
+                if v is None or v == "":
+                    current[k] = None
+                    continue
+                budget = _coerce_provider_cost_budget(v)
+                if budget is None:
+                    continue
+                current[k] = budget
+                continue
             # Coerce bool keys
             if k in _SETTINGS_BOOL_KEYS:
                 v = bool(v)
             current[k] = v
+            if key_is_speech:
+                applied_speech_keys.add(k)
     theme_value = pending_theme
     skin_value = pending_skin
     if theme_was_explicit and not skin_was_explicit:
@@ -7254,12 +8732,17 @@ def save_settings(settings: dict) -> dict:
     current["default_workspace"] = str(
         resolve_default_workspace(current.get("default_workspace"))
     )
-    persisted = {k: v for k, v in current.items() if k != "default_model"}
+    effective_persisted_speech_keys = set(persisted_speech_keys)
+    effective_persisted_speech_keys.update(applied_speech_keys)
+    persisted = _settings_payload_for_write(current, effective_persisted_speech_keys)
     SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
     SETTINGS_FILE.write_text(
         json.dumps(persisted, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+    global _SETTINGS_WRITE_VERSION
+    with _SETTINGS_WRITE_LOCK:
+        _SETTINGS_WRITE_VERSION += 1
     # Invalidate the in-memory password hash cache so the next call to
     # get_password_hash() picks up the new value from disk immediately.
     if _password_changed:
@@ -7293,8 +8776,17 @@ if _settings_file_exists:
     if _startup_settings.get("default_workspace") != str(DEFAULT_WORKSPACE):
         _startup_settings["default_workspace"] = str(DEFAULT_WORKSPACE)
         try:
+            startup_persisted_speech_keys = _extract_persisted_speech_keys(
+                _read_raw_settings_file()
+            )
             SETTINGS_FILE.write_text(
-                json.dumps(_startup_settings, ensure_ascii=False, indent=2),
+                json.dumps(
+                    _settings_payload_for_write(
+                        _startup_settings, startup_persisted_speech_keys
+                    ),
+                    ensure_ascii=False,
+                    indent=2,
+                ),
                 encoding="utf-8",
             )
         except Exception:
@@ -7311,3 +8803,16 @@ try:
     init_profile_state()
 except ImportError:
     pass  # hermes_cli not available -- default profile only
+
+
+# Run the provider-model seeder once at import time. Must be at the END of the
+# module because _seed_provider_models_from_core() calls _get_label_for_model,
+# which is defined ~3000 lines above. Placing the invocation earlier (e.g. right
+# after the seeder's def) caused a NameError that the bare except silently
+# swallowed — exactly when the seeder had real work to do (#4413).
+try:
+    _seed_provider_models_from_core()
+except ImportError:
+    pass  # hermes_cli not available (standalone deployment)
+except Exception:
+    logger.warning("provider-model seeder failed", exc_info=True)

@@ -293,6 +293,66 @@ def test_webui_state_db_session_without_sidecar_appears_when_agent_sessions_enab
         post('/api/settings', {'show_cli_sessions': False})
 
 
+def test_active_cli_state_db_session_with_persisted_user_turn_is_visible_in_cli_bucket():
+    """Active default-title CLI rows with persisted user content stay visible in the CLI bucket."""
+    conn = _ensure_state_db()
+    active_sid = 'cli_active_visible_001'
+    older_sid = 'cli_older_visible_001'
+    ended_sid = 'cli_ended_hidden_001'
+    now = time.time()
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO sessions "
+            "(id, source, title, model, started_at, message_count, ended_at, end_reason) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (active_sid, 'cli', 'Untitled', 'openai/gpt-5', now + 20, 0, None, None),
+        )
+        conn.execute("DELETE FROM messages WHERE session_id = ?", (active_sid,))
+        _insert_message(conn, active_sid, 'user', 'Active CLI session still running', now + 21)
+
+        conn.execute(
+            "INSERT OR REPLACE INTO sessions "
+            "(id, source, title, model, started_at, message_count, ended_at, end_reason) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (older_sid, 'cli', 'Named CLI Session', 'openai/gpt-5', now, 1, None, None),
+        )
+        conn.execute("DELETE FROM messages WHERE session_id = ?", (older_sid,))
+        _insert_message(conn, older_sid, 'user', 'Older visible CLI session', now + 1)
+
+        conn.execute(
+            "INSERT OR REPLACE INTO sessions "
+            "(id, source, title, model, started_at, message_count, ended_at, end_reason) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (ended_sid, 'cli', 'Untitled', 'openai/gpt-5', now + 10, 1, now + 11, 'cli-close'),
+        )
+        conn.execute("DELETE FROM messages WHERE session_id = ?", (ended_sid,))
+        _insert_message(conn, ended_sid, 'user', 'Ended CLI session', now + 11)
+        conn.commit()
+
+        post('/api/settings', {'show_cli_sessions': True})
+
+        data, status = get('/api/sessions?sidebar_source=cli')
+        assert status == 200
+        sessions = data.get('sessions', [])
+        session_ids = [s.get('session_id') for s in sessions]
+        assert active_sid in session_ids
+        assert older_sid in session_ids
+        assert ended_sid not in session_ids, "ended default-title CLI rows with one user turn stay hidden"
+
+        active = next(s for s in sessions if s.get('session_id') == active_sid)
+        older = next(s for s in sessions if s.get('session_id') == older_sid)
+        assert active.get('message_count') == 1
+        assert active.get('updated_at') > older.get('updated_at')
+        assert session_ids.index(active_sid) < session_ids.index(older_sid)
+    finally:
+        try:
+            _remove_test_sessions(conn, active_sid, older_sid, ended_sid)
+            conn.close()
+        except Exception:
+            pass
+        post('/api/settings', {'show_cli_sessions': False})
+
+
 def test_gateway_sessions_without_messages_are_hidden_from_sidebar():
     """Regression: empty agent session rows must not appear as broken sidebar entries."""
     conn = _ensure_state_db()
@@ -960,6 +1020,7 @@ def test_agent_session_source_normalization_contract():
         'discord': ('messaging', 'Discord'),
         'slack': ('messaging', 'Slack'),
         'cron': ('cron', 'Cron'),
+        'webhook': ('webhook', 'Webhook'),
         'tool': ('tool', 'Tool'),
         'api_server': ('api', 'API'),
         'something_new': ('other', 'Something New'),
@@ -1331,7 +1392,13 @@ def test_sessions_response_backfills_imported_messaging_source_metadata(cleanup_
     sid = 'gw_legacy_import_weixin_001'
     cleanup_test_sessions.append(sid)
     try:
-        _insert_gateway_session(conn, session_id=sid, source='weixin', title='Weixin Session')
+        _insert_gateway_session(
+            conn,
+            session_id=sid,
+            source='weixin',
+            title='Weixin Session',
+            session_key='agent:test:weixin:legacy-import-backfill',
+        )
         s = Session(
             session_id=sid,
             title='Legacy Imported Weixin',
@@ -1487,6 +1554,159 @@ def test_sessions_response_distinguishes_same_user_different_chat_identity_from_
             conn.close()
         except Exception:
             pass
+
+
+def test_messaging_projection_keeps_no_identity_continuation_when_gateway_source_active(monkeypatch, cleanup_test_sessions):
+    """A WebUI/mobile recovery continuation must not disappear behind source-wide Gateway hiding.
+
+    Long WebUI turns can rotate to a child session during compression. If the
+    browser is backgrounded before the final SSE handoff, recovery depends on
+    the continuation still being visible in the sidebar. This is source-generic:
+    Telegram, Discord, Slack, and Weixin all use the same messaging projection.
+    """
+    from api import routes
+    from api.models import Session
+
+    parent_sid = "webui_pre_compression_snapshot"
+    cleanup_test_sessions.append(parent_sid)
+    Session(
+        session_id=parent_sid,
+        title="Archived pre-compression snapshot",
+        model="openai/gpt-5",
+        messages=[{"role": "user", "content": "before compression", "timestamp": time.time() - 10}],
+        pre_compression_snapshot=True,
+    ).save(touch_updated_at=False)
+
+    for source in ("telegram", "discord", "slack", "weixin"):
+        active_sid = f"{source}_active_sid"
+        continuation_sid = f"webui_{source}_continuation_no_identity"
+        cleanup_test_sessions.append(continuation_sid)
+        monkeypatch.setattr(
+            routes,
+            "_load_gateway_session_identity_map",
+            lambda source=source, active_sid=active_sid: {
+                active_sid: {
+                    "session_key": f"agent:main:{source}:dm:user_1",
+                    "raw_source": source,
+                    "platform": source,
+                    "chat_type": "dm",
+                    "chat_id": "user_1",
+                    "user_id": "user_1",
+                },
+            },
+        )
+        sessions = [
+            {
+                "session_id": active_sid,
+                "raw_source": source,
+                "session_source": "messaging",
+                "title": f"Current {source} DM",
+                "updated_at": 100,
+                "message_count": 3,
+            },
+            {
+                "session_id": continuation_sid,
+                "raw_source": source,
+                "session_source": "messaging",
+                "chat_id": "webui_recovery_chat",
+                "chat_type": "dm",
+                "title": f"Recovered {source} WebUI continuation",
+                "parent_session_id": parent_sid,
+                "updated_at": 200,
+                "message_count": 1003,
+            },
+        ]
+
+        kept = routes._keep_latest_messaging_session_per_source(sessions)
+        ids = {session.get("session_id") for session in kept}
+
+        assert ids == {active_sid, continuation_sid}
+
+
+def test_session_load_exposes_continuation_for_pre_compression_snapshot(cleanup_test_sessions):
+    """Reloading an old hidden compression snapshot should give the browser a recovery target."""
+    from api.models import Session
+
+    parent_sid = "webui_mobile_snapshot_parent"
+    child_sid = "webui_mobile_snapshot_child"
+    now = time.time()
+    cleanup_test_sessions.extend([parent_sid, child_sid])
+
+    parent = Session(
+        session_id=parent_sid,
+        title="Mobile reload parent",
+        model="openai/gpt-5",
+        messages=[{"role": "user", "content": "before compression", "timestamp": now - 10}],
+        created_at=now - 20,
+        updated_at=now - 10,
+        pre_compression_snapshot=True,
+    )
+    child = Session(
+        session_id=child_sid,
+        title="Mobile reload child",
+        model="openai/gpt-5",
+        parent_session_id=parent_sid,
+        messages=[{"role": "assistant", "content": "finished after reload", "timestamp": now}],
+        created_at=now - 5,
+        updated_at=now,
+    )
+    parent.save(touch_updated_at=False)
+    child.save(touch_updated_at=False)
+
+    data, status = get(f"/api/session?session_id={parent_sid}&messages=0&resolve_model=0")
+
+    assert status == 200
+    assert data["session"].get("session_id") == parent_sid
+    assert data["session"].get("continuation_session_id") == child_sid
+
+
+def test_session_load_exposes_multihop_continuation_for_repeated_compression(cleanup_test_sessions):
+    """A stale older snapshot should recover to the newest visible descendant."""
+    from api.models import Session
+
+    root_sid = "webui_mobile_snapshot_root"
+    middle_sid = "webui_mobile_snapshot_middle"
+    child_sid = "webui_mobile_snapshot_grandchild"
+    now = time.time()
+    cleanup_test_sessions.extend([root_sid, middle_sid, child_sid])
+
+    root = Session(
+        session_id=root_sid,
+        title="Mobile reload root snapshot",
+        model="openai/gpt-5",
+        messages=[{"role": "user", "content": "before first compression", "timestamp": now - 30}],
+        created_at=now - 40,
+        updated_at=now - 30,
+        pre_compression_snapshot=True,
+    )
+    middle = Session(
+        session_id=middle_sid,
+        title="Mobile reload middle snapshot",
+        model="openai/gpt-5",
+        parent_session_id=root_sid,
+        messages=[{"role": "assistant", "content": "before second compression", "timestamp": now - 20}],
+        created_at=now - 25,
+        updated_at=now - 20,
+        pre_compression_snapshot=True,
+    )
+    child = Session(
+        session_id=child_sid,
+        title="Mobile reload final child",
+        model="openai/gpt-5",
+        parent_session_id=middle_sid,
+        messages=[{"role": "assistant", "content": "finished after repeated compression", "timestamp": now}],
+        created_at=now - 5,
+        updated_at=now,
+    )
+    root.save(touch_updated_at=False)
+    middle.save(touch_updated_at=False)
+    child.save(touch_updated_at=False)
+
+    data, status = get(f"/api/session?session_id={root_sid}&messages=0&resolve_model=0")
+
+    assert status == 200
+    assert data["session"].get("session_id") == root_sid
+    assert data["session"].get("continuation_session_id") == child_sid
 
 
 def test_messaging_projection_hides_stale_gateway_internal_segments(monkeypatch):
@@ -1762,12 +1982,59 @@ def test_delete_imported_messaging_session_preserves_agent_memory(cleanup_test_s
             (sid,),
         ).fetchone()[0]
         assert remaining == 2
+
+        # A messaging-session delete deliberately preserves the state.db
+        # transcript (delete_cli_session is skipped), so it must NOT be
+        # recorded in the deleted-WebUI tombstone — otherwise
+        # _claim_or_synthesize_cli_session() would treat the still-live
+        # channel session as was-webui and self-heal it to a 404 on reopen.
+        import api.models as _m
+        assert sid not in _m._load_webui_deleted_session_tombstone(), (
+            "messaging session must not be tombstoned as a deleted WebUI session"
+        )
     finally:
         try:
             _remove_test_sessions(conn, sid)
             conn.close()
         except Exception:
             pass
+
+
+def test_deleted_webui_session_stays_out_of_sidebar_projection(cleanup_test_sessions):
+    """A tombstoned deleted WebUI session must not resurface via the state.db projection.
+
+    Regression for #5498 (second path): even when non-WebUI sessions are shown,
+    _load_cli_sessions_uncached() projects source='webui' state.db rows into the
+    sidebar. Without honoring the deleted-WebUI tombstone, a deleted session
+    reappears as an 'Agent' ghost. The projection must skip a tombstoned
+    source='webui' row that has no live sidecar.
+    """
+    import api.models as _m
+
+    conn = _ensure_state_db()
+    sid = 'webui_deleted_ghost_projection_001'
+    cleanup_test_sessions.append(sid)
+    try:
+        _insert_gateway_session(conn, session_id=sid, source='webui', title='Deleted WebUI Ghost')
+        _m._record_webui_deleted_session_tombstone(sid)
+        # Tombstone should win: ensure no live sidecar exists for this sid.
+        assert not (_m.SESSION_DIR / f'{sid}.json').exists()
+
+        post('/api/settings', {'show_cli_sessions': True})
+        data, status = get('/api/sessions')
+        assert status == 200
+        ids = {s['session_id'] for s in data.get('sessions', [])}
+        assert sid not in ids, (
+            "deleted (tombstoned) WebUI session must not resurface in the sidebar projection"
+        )
+    finally:
+        try:
+            _m._clear_webui_deleted_session_tombstone(sid)
+            _remove_test_sessions(conn, sid)
+            conn.close()
+        except Exception:
+            pass
+        post('/api/settings', {'show_cli_sessions': False})
 
 
 def test_imported_cron_sessions_hidden_from_sidebar_by_default(cleanup_test_sessions):
@@ -2171,6 +2438,29 @@ def test_importing_older_gateway_session_preserves_original_timestamps_and_order
             {'session_id': newer_webui_sid, 'title': 'Newer WebUI Session'},
         )
         assert rename_status == 200, rename
+        from api.models import Session
+        from tests.conftest import TEST_WORKSPACE
+        newer_webui_session = Session(
+            session_id=newer_webui_sid,
+            title='Newer WebUI Session',
+            workspace=str(TEST_WORKSPACE),
+            model='openai/gpt-5',
+            created_at=newer_webui['session']['created_at'],
+            updated_at=time.time(),
+            profile='default',
+            messages=[{
+                'role': 'user',
+                'content': 'newer visible row',
+                'timestamp': time.time(),
+            }],
+            tool_calls=[],
+        )
+        newer_webui_session.save(touch_updated_at=False)
+        rename_refresh, rename_refresh_status = post(
+            '/api/session/rename',
+            {'session_id': newer_webui_sid, 'title': 'Newer WebUI Session'},
+        )
+        assert rename_refresh_status == 200, rename_refresh
 
         _insert_gateway_session(
             conn,

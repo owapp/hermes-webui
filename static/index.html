@@ -17,7 +17,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Hermes Layer">
 <link rel="apple-touch-icon" sizes="512x512" href="static/apple-touch-icon.png?v=hl-logo-20260609j">
-<script>(function(){try{var themes={light:1,dark:1,system:1},skins={default:1,ares:1,mono:1,graphite:1,slate:1,poseidon:1,sisyphus:1,charizard:1,sienna:1,catppuccin:1,hepburn:1,nous:1,'geist-contrast':1,neon:1,zeus:1,'verdigris':1},legacy={slate:['dark','slate'],solarized:['dark','poseidon'],monokai:['dark','sisyphus'],nord:['dark','slate'],oled:['dark','default']},t=(localStorage.getItem('hermes-theme')||'dark').toLowerCase(),s=(localStorage.getItem('hermes-skin')||'').toLowerCase(),m=legacy[t],theme=m?m[0]:(themes[t]?t:'dark'),skin=skins[s]?s:(m?m[1]:'default');localStorage.setItem('hermes-theme',theme);localStorage.setItem('hermes-skin',skin);if(theme==='system')theme=window.matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light';if(theme==='dark')document.documentElement.classList.add('dark');if(skin!=='default')document.documentElement.dataset.skin=skin;}catch(e){document.documentElement.classList.add('dark');}})()</script>
+<script>(function(){try{var themes={light:1,dark:1,system:1},skins={codex:1,terracotta:1,default:1,ares:1,mono:1,graphite:1,github:1,slate:1,poseidon:1,sisyphus:1,charizard:1,sienna:1,catppuccin:1,hepburn:1,nous:1,'geist-contrast':1,neon:1,'neon-soft':1,'neon-paint':1,zeus:1,'verdigris':1},legacy={slate:['dark','slate'],solarized:['dark','poseidon'],monokai:['dark','sisyphus'],nord:['dark','slate'],oled:['dark','default']},t=(localStorage.getItem('hermes-theme')||'dark').toLowerCase(),s=(localStorage.getItem('hermes-skin')||'').toLowerCase(),m=legacy[t],theme=m?m[0]:(themes[t]?t:'dark');var pendingExt=s&&s!=='default'&&!skins[s]&&!legacy[s];var skin=skins[s]?s:(pendingExt?s:(m?m[1]:'default'));localStorage.setItem('hermes-theme',theme);localStorage.setItem('hermes-skin',skin);if(theme==='system')theme=window.matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light';if(theme==='dark')document.documentElement.classList.add('dark');if(skin!=='default')document.documentElement.dataset.skin=skin;}catch(e){document.documentElement.classList.add('dark');}})()</script>
 <script>(function(){try{var fs=localStorage.getItem('hermes-font-size');if(fs&&fs!=='default')document.documentElement.dataset.fontSize=fs;}catch(e){}})()</script>
 <!-- theme-color: surfaces the active app chrome color to native status bars (Safari status bar, PWA, native WKWebView wrappers). Updated dynamically by boot.js when theme/skin changes. The light/dark default values match style.css :root --sidebar / :root.dark --sidebar. -->
 <meta name="theme-color" content="#FAF7F0" media="(prefers-color-scheme: light)">
@@ -29,6 +29,7 @@
 <link rel="preload" href="static/pwa-startup.js?v=__WEBUI_VERSION__" as="script">
 <script src="static/pwa-startup.js?v=__WEBUI_VERSION__"></script>
 <script>window.__HERMES_CONFIG__={maxUploadBytes:__MAX_UPLOAD_BYTES__,csrfToken:__CSRF_TOKEN_JSON__};</script>
+<script>window.__HERMES_WEBUI_BUNDLE_VERSION__='__WEBUI_VERSION__';</script>
 <script>(function(){
   var cfg=window.__HERMES_CONFIG__||{},token=cfg.csrfToken||'';
   if(!token||!window.fetch)return;
@@ -122,12 +123,19 @@
   <div class="hl-hosted-boot-spinner" aria-hidden="true"></div>
 </div>
 <header class="app-titlebar" role="banner">
-  <button class="app-titlebar-hamburger has-tooltip has-tooltip--bottom" id="btnHamburger" onclick="toggleMobileSidebar()" type="button" data-tooltip="Menu" aria-label="Menu">
+  <div class="app-titlebar-left">
+    <button class="app-titlebar-profile" id="titlebarProfileBtn" type="button" onclick="toggleProfileDropdown(event)" aria-label="Switch profile" style="display:none">
+      <span class="app-titlebar-profile-icon" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span>
+      <span class="app-titlebar-profile-label" id="titlebarProfileLabel">default</span>
+      <span class="app-titlebar-profile-chevron" aria-hidden="true"><svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></span>
+    </button>
+    <button class="app-titlebar-hamburger has-tooltip has-tooltip--bottom" id="btnHamburger" onclick="toggleMobileSidebar()" type="button" data-tooltip="Menu" aria-label="Menu">
     <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
   </button>
   <span class="app-titlebar-brand" aria-hidden="true">
     <img src="static/logo.svg?v=hl-logo-20260609j" width="20" height="20" alt="">
   </span>
+  </div>
   <div class="app-titlebar-inner">
     <span class="app-titlebar-icon" aria-hidden="true">
       <img src="static/logo.svg?v=hl-logo-20260609j" width="16" height="16" alt="">
@@ -170,10 +178,12 @@
     <button class="rail-btn nav-tab has-tooltip" data-panel="insights" onclick="switchPanel('insights',{fromRailClick:true})" data-tooltip="Insights" data-i18n-title="tab_insights" aria-label="Insights"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg></button>
     <button class="rail-btn nav-tab has-tooltip" data-panel="logs" onclick="switchPanel('logs',{fromRailClick:true})" data-tooltip="Logs" data-i18n-title="tab_logs" aria-label="Logs"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8"/><path d="M8 17h8"/><path d="M8 9h2"/></svg></button>
     <div class="rail-spacer"></div>
-    <button class="rail-btn nav-tab has-tooltip" data-panel="settings" onclick="switchPanel('settings',{fromRailClick:true})" data-tooltip="Settings" data-i18n-title="tab_settings" aria-label="Settings"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
+    <button class="rail-btn nav-tab has-tooltip" data-panel="settings" onclick="switchPanel('settings',{fromRailClick:true})" data-tooltip="Settings" data-i18n-title="tab_settings" aria-label="Settings"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg><span class="auth-warning-badge" id="authWarningBadgeDesktop" style="display:none;position:absolute;top:4px;right:4px;width:8px;height:8px;border-radius:50%;background:#e05"></span></button>
   </nav>
   <aside class="sidebar">
-
+    <button class="panel-head-btn mobile-sidebar-close has-tooltip has-tooltip--bottom-right" type="button" onclick="closeMobileSidebar()" data-tooltip="Close menu" data-i18n-title="close_menu" aria-label="Close menu" data-i18n-aria-label="close_menu">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </button>
     <div class="sidebar-nav">
       <button class="nav-tab active has-tooltip has-tooltip--bottom" data-panel="chat" data-label="Chat" onclick="switchPanel('chat',{fromRailClick:true})" data-tooltip="Chat" data-i18n-title="tab_chat"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></button>
       <button class="nav-tab has-tooltip has-tooltip--bottom" data-panel="tasks" data-label="Tasks" onclick="switchPanel('tasks',{fromRailClick:true})" data-tooltip="Tasks" data-i18n-title="tab_tasks"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></button>
@@ -186,7 +196,7 @@
       <button class="nav-tab has-tooltip has-tooltip--bottom" data-panel="insights" data-label="Insights" onclick="switchPanel('insights',{fromRailClick:true})" data-tooltip="Insights" data-i18n-title="tab_insights"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg></button>
       <button class="nav-tab has-tooltip has-tooltip--bottom" data-panel="logs" data-label="Logs" onclick="switchPanel('logs',{fromRailClick:true})" data-tooltip="Logs" data-i18n-title="tab_logs"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8"/><path d="M8 17h8"/><path d="M8 9h2"/></svg></button>
       <!-- Settings button mirrored here for mobile (rail is desktop-only via @media >=768px). Keep in sync with rail entry. -->
-      <button class="nav-tab has-tooltip has-tooltip--bottom" data-panel="settings" onclick="switchPanel('settings',{fromRailClick:true})" data-tooltip="Settings" data-i18n-title="tab_settings"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
+      <button class="nav-tab has-tooltip has-tooltip--bottom" data-panel="settings" onclick="switchPanel('settings',{fromRailClick:true})" data-tooltip="Settings" data-i18n-title="tab_settings" style="position:relative"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg><span class="auth-warning-badge" id="authWarningBadgeMobile" style="display:none;position:absolute;top:4px;right:4px;width:8px;height:8px;border-radius:50%;background:#e05"></span></button>
     </div>
     <!-- Flash-prevention: apply hidden tab visibility from localStorage synchronously
          before any paint. Mirrors the theme/skin/font-size inline scripts in <head>.
@@ -360,51 +370,60 @@
             placeholder="Search settings…" oninput="filterSettings(this.value)" autocomplete="off">
           <div id="settingsSearchResults" class="settings-search-results" style="display:none"></div>
         </div>
-        <button type="button" class="side-menu-item active" data-settings-section="conversation" onclick="switchSettingsSection('conversation')">
+        <div class="settings-menu-items">
+        <button type="button" class="side-menu-item active" data-settings-section="conversation" onclick="switchSettingsSection('conversation',{fromSidebarItem:true})">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
           <span data-i18n="settings_tab_conversation">Conversation</span>
         </button>
-        <button type="button" class="side-menu-item" data-settings-section="appearance" onclick="switchSettingsSection('appearance')">
+        <button type="button" class="side-menu-item" data-settings-section="appearance" onclick="switchSettingsSection('appearance',{fromSidebarItem:true})">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
           <span data-i18n="settings_tab_appearance">Appearance</span>
         </button>
-        <button type="button" class="side-menu-item" data-settings-section="preferences" onclick="switchSettingsSection('preferences')">
+        <button type="button" class="side-menu-item" data-settings-section="preferences" onclick="switchSettingsSection('preferences',{fromSidebarItem:true})">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
           <span data-i18n="settings_tab_preferences">Preferences</span>
         </button>
-        <button type="button" class="side-menu-item" data-settings-section="providers" onclick="switchSettingsSection('providers')">
+        <button type="button" class="side-menu-item" data-settings-section="providers" onclick="switchSettingsSection('providers',{fromSidebarItem:true})">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
           <span data-i18n="providers_tab_title">Providers</span>
         </button>
-        <button type="button" class="side-menu-item" data-settings-section="messagingChannels" onclick="switchSettingsSection('messagingChannels')">
+        <button type="button" class="side-menu-item" data-settings-section="messagingChannels" onclick="switchSettingsSection('messagingChannels',{fromSidebarItem:true})">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
           <span data-i18n="messaging_channels_tab_title">Messaging Channels</span>
         </button>
-        <button type="button" class="side-menu-item" data-settings-section="eventWebhooks" onclick="switchSettingsSection('eventWebhooks')">
+        <button type="button" class="side-menu-item" data-settings-section="eventWebhooks" onclick="switchSettingsSection('eventWebhooks',{fromSidebarItem:true})">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 16.5a3 3 0 1 0 0-6"/><path d="M6 7.5a3 3 0 1 0 0 6"/><path d="M8.6 8.8l6.8-3.6"/><path d="M8.6 15.2l6.8 3.6"/><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/></svg>
           <span data-i18n="event_webhooks_tab_title">Webhooks</span>
         </button>
-        <button type="button" class="side-menu-item" data-settings-section="developerApi" onclick="switchSettingsSection('developerApi')">
+        <button type="button" class="side-menu-item" data-settings-section="developerApi" onclick="switchSettingsSection('developerApi',{fromSidebarItem:true})">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 18l6-6-6-6"/><path d="M8 6l-6 6 6 6"/><path d="M14.5 4l-5 16"/></svg>
           <span data-i18n="developer_api_tab_title">Developer API</span>
         </button>
-        <button type="button" class="side-menu-item" data-settings-section="plugins" onclick="switchSettingsSection('plugins')">
+        <button type="button" class="side-menu-item" data-settings-section="plugins" onclick="switchSettingsSection('plugins',{fromSidebarItem:true})">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2l3 7h7l-5.5 4.3 2.1 7L12 16.2 5.4 20.3l2.1-7L2 9h7z"/></svg>
           <span data-i18n="settings_tab_plugins">Plugins</span>
         </button>
-        <button type="button" class="side-menu-item" data-settings-section="system" onclick="switchSettingsSection('system')">
+<button type="button" class="side-menu-item" data-settings-section="extensions" onclick="switchSettingsSection('extensions',{fromSidebarItem:true})">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 2v6"/><path d="M15 2v6"/><path d="M7 8h10v4a5 5 0 0 1-10 0V8z"/><path d="M12 17v5"/></svg>
+            <span data-i18n="settings_tab_extensions">Extensions</span>
+          </button>
+        <button type="button" class="side-menu-item" data-settings-section="system" onclick="switchSettingsSection('system',{fromSidebarItem:true})">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="3" width="20" height="8" rx="2"/><rect x="2" y="13" width="20" height="8" rx="2"/><line x1="6" y1="7" x2="6.01" y2="7"/><line x1="6" y1="17" x2="6.01" y2="17"/></svg>
           <span data-i18n="settings_tab_system">System</span>
         </button>
-        <button type="button" class="side-menu-item" data-settings-section="help" onclick="switchSettingsSection('help')">
+        <button type="button" class="side-menu-item" data-settings-section="help" onclick="switchSettingsSection('help',{fromSidebarItem:true})">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
           <span data-i18n="settings_tab_help">Help</span>
         </button>
+        </div>
+
       </div>
     </div>
   <div class="resize-handle" id="sidebarResize"></div>
   </aside>
   <main class="main">
+
+
     <div id="mainChat" class="main-view">
     <div class="messages-shell">
       <button id="jumpToSessionStartBtn" class="session-jump-btn session-jump-btn--start" aria-label="Jump to beginning of session" data-i18n-aria-label="session_jump_start_label" data-i18n-title="session_jump_start_label" onclick="jumpToSessionStart()" style="display:none"><span aria-hidden="true">↑</span><span data-i18n="session_jump_start">Start</span></button>
@@ -416,7 +435,9 @@
         aria-controls="outlinePanelWrapper">&#9776;</button>
     <div class="messages" id="messages">
       <div class="empty-state" id="emptyState">
+
         <div class="empty-logo" style="width:104px;height:104px"><img src="static/logo-medium.svg?v=hl-logo-20260609j" width="92" height="92" alt="" style="width:92px;height:92px;object-fit:contain"></div>
+
         <h2 data-i18n="empty_title">What can I help with?</h2>
         <p data-i18n="empty_subtitle">Ask anything, run commands, explore files, or manage your scheduled tasks.</p>
         <div class="suggestion-grid">
@@ -451,7 +472,10 @@
         <strong id="agentHealthTitle">Hermes agent is not responding</strong>
         <span id="agentHealthDetails">The gateway heartbeat failed. Messages may not be delivered until it comes back.</span>
       </div>
-      <button class="agent-health-dismiss" id="agentHealthDismiss" type="button" onclick="dismissAgentHealthAlert()" aria-label="Dismiss Hermes agent heartbeat alert">Dismiss</button>
+      <div class="agent-health-actions">
+        <button class="agent-health-restart" id="btnRestartGateway" type="button" onclick="restartGatewayService()">Restart Service</button>
+        <button class="agent-health-dismiss" id="agentHealthDismiss" type="button" onclick="dismissAgentHealthAlert()" aria-label="Dismiss Hermes agent heartbeat alert">Dismiss</button>
+      </div>
     </div>
     <div class="composer-wrap" id="composerWrap">
       <div class="composer-flyout">
@@ -459,12 +483,13 @@
       <div id="queueCard" class="queue-card" role="region" aria-label="Queued messages" aria-live="polite">
         <div id="queueChips" class="queue-card-inner"></div>
       </div>
-      <div class="approval-card" id="approvalCard" role="alertdialog" aria-labelledby="approvalHeading" aria-describedby="approvalDesc">
+      <div class="approval-card" id="approvalCard" role="alertdialog" aria-labelledby="approvalHeading" aria-describedby="approvalDesc" hidden aria-hidden="true" inert>
         <div class="approval-inner">
           <div class="approval-header">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
             <span id="approvalHeading" data-i18n="approval_heading">Approval required</span>
             <button type="button" class="approval-collapse" id="approvalCollapse" aria-expanded="true" aria-label="Collapse approval" aria-controls="approvalDesc approvalCmd approvalCounter approvalBtns" onclick="toggleApprovalCardCollapsed()" title="Collapse approval"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"></polyline></svg></button>
+            <button type="button" class="approval-dismiss" onclick="dismissApprovalCard()" aria-label="Dismiss approval" title="Dismiss approval"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
           </div>
           <div class="approval-desc" id="approvalDesc"></div>
           <div class="approval-cmd" id="approvalCmd"></div>
@@ -494,7 +519,7 @@
           </div>
         </div>
       </div>
-      <div class="clarify-card" id="clarifyCard" role="dialog" aria-labelledby="clarifyHeading" aria-describedby="clarifyQuestion clarifyHint">
+      <div class="clarify-card" id="clarifyCard" role="dialog" aria-labelledby="clarifyHeading" aria-describedby="clarifyQuestion clarifyHint" hidden aria-hidden="true" inert>
         <div class="clarify-inner">
           <div class="clarify-header">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 17h.01"/><path d="M9.09 9a3 3 0 1 1 5.82 1c0 2-3 2-3 4"/><circle cx="12" cy="12" r="10"/></svg>
@@ -616,7 +641,7 @@
                 </button>
               </div>
             </div>
-            <button class="icon-btn composer-mobile-config-btn" id="composerMobileConfigBtn" type="button" onclick="toggleMobileComposerConfig()" title="Workspace, model, reasoning, and context settings" aria-label="Workspace, model, reasoning, and context settings" aria-haspopup="true" aria-expanded="false" aria-controls="composerMobileConfigPanel">
+            <button class="icon-btn composer-mobile-config-btn" id="composerMobileConfigBtn" type="button" onclick="toggleMobileComposerConfig()" title="Workspace, model, quota, reasoning, and context settings" aria-label="Workspace, model, quota, reasoning, and context settings" aria-haspopup="true" aria-expanded="false" aria-controls="composerMobileConfigPanel">
               <svg id="composerMobileCtxRing" viewBox="0 0 36 36" width="24" height="24" style="display:block;overflow:visible;transform:rotate(-90deg)" aria-hidden="true"><circle cx="18" cy="18" r="14" fill="none" stroke="currentColor" stroke-width="3.5" opacity="0.2"/><circle id="ctx-arc" cx="18" cy="18" r="14" fill="none" stroke="#22c55e" stroke-width="3.5" stroke-dasharray="87.96 87.96" stroke-dashoffset="87.96" stroke-linecap="round"/><text id="ctx-num" x="18" y="18" text-anchor="middle" dominant-baseline="middle" style="transform:rotate(90deg);transform-origin:18px 18px;font-size:9px;font-weight:700;fill:currentColor;stroke:none">0</text></svg>
             </button>
             <div class="composer-model-wrap">
@@ -695,7 +720,7 @@
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
             </button>
           </div>
-          <div class="composer-mobile-config-panel" id="composerMobileConfigPanel" aria-label="Workspace, model, reasoning, and context settings">
+          <div class="composer-mobile-config-panel" id="composerMobileConfigPanel" aria-label="Workspace, model, quota, reasoning, and context settings">
             <button class="composer-mobile-config-action" id="composerMobileWorkspaceAction" type="button" onclick="toggleComposerWsDropdown()" title="Switch workspace">
               <span class="composer-workspace-icon" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></span>
               <span class="composer-mobile-config-copy"><span class="composer-mobile-config-kicker" data-i18n="composer_mobile_workspace">Workspace</span><span class="composer-mobile-config-value" id="composerMobileWorkspaceLabel"></span></span>
@@ -703,6 +728,10 @@
             <button class="composer-mobile-config-action" id="composerMobileModelAction" type="button" onclick="toggleModelDropdown()" title="Conversation model">
               <span class="composer-model-icon" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M15 2v2"/><path d="M15 20v2"/><path d="M2 15h2"/><path d="M2 9h2"/><path d="M20 15h2"/><path d="M20 9h2"/><path d="M9 2v2"/><path d="M9 20v2"/></svg></span>
               <span class="composer-mobile-config-copy"><span class="composer-mobile-config-kicker" data-i18n="composer_mobile_model">Model</span><span class="composer-mobile-config-value" id="composerMobileModelLabel"></span></span>
+            </button>
+            <button class="composer-mobile-config-action" id="composerMobileQuotaAction" type="button" onclick="switchPanel('settings');switchSettingsSection('providers')" title="Provider quota" style="display:none">
+              <span class="composer-model-icon" aria-hidden="true"><span class="provider-quota-chip-dot" style="box-shadow:none"></span></span>
+              <span class="composer-mobile-config-copy"><span class="composer-mobile-config-kicker" data-i18n="composer_mobile_quota">Quota</span><span class="composer-mobile-config-value" id="composerMobileQuotaLabel"></span></span>
             </button>
             <button class="composer-mobile-config-action" id="composerMobileReasoningAction" type="button" onclick="toggleReasoningDropdown()" title="Reasoning effort level" style="display:none">
               <span class="composer-reasoning-icon" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96-.46 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 1.98-3A2.5 2.5 0 0 1 9.5 2Z"/><path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96-.46 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-1.98-3A2.5 2.5 0 0 0 14.5 2Z"/></svg></span>
@@ -719,7 +748,6 @@
               <button class="ctx-compress-btn composer-mobile-context-compress" id="composerMobileCtxCompressBtn" type="button" style="display:none"></button>
             </div>
           </div>
-          <div class="profile-dropdown" id="profileDropdown"></div>
           <div class="ws-dropdown ws-dropdown-footer" id="composerWsDropdown"></div>
           <div class="composer-reasoning-dropdown" id="composerReasoningDropdown">
             <div class="reasoning-option" data-effort="none">None</div>
@@ -818,6 +846,7 @@
         </div>
         <div class="main-view-actions">
           <button class="panel-head-btn has-tooltip has-tooltip--bottom" id="btnKanbanCreateBoard" onclick="openKanbanCreateBoard()" data-tooltip="New board" data-i18n-title="kanban_new_board" aria-label="New board"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><line x1="17.5" y1="14" x2="17.5" y2="21"/><line x1="14" y1="17.5" x2="21" y2="17.5"/></svg></button>
+          <button class="panel-head-btn kanban-view-toggle has-tooltip has-tooltip--bottom" id="btnKanbanViewToggle" type="button" onclick="toggleKanbanViewMode()" aria-pressed="false" data-tooltip="Consolidated view" data-i18n-title="kanban_view_consolidated" data-i18n-aria-label="kanban_view_consolidated" aria-label="Consolidated view"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M8 4v16"/><path d="M16 4v16"/><path d="M3 10h18"/></svg></button>
           <button class="panel-head-btn has-tooltip has-tooltip--bottom kanban-nudge-dispatch-btn" id="btnKanbanPreviewDispatcher" onclick="nudgeKanbanDispatcher()" data-tooltip="Preview dispatcher (dry-run)" data-i18n-title="kanban_nudge_dispatcher" aria-label="Preview dispatcher (dry-run)">▶</button>
           <button class="panel-head-btn has-tooltip has-tooltip--bottom kanban-run-dispatch-btn" id="btnKanbanRunDispatcher" onclick="runKanbanDispatcher()" data-tooltip="Run dispatcher — claim Ready tasks" data-i18n-title="kanban_run_dispatcher" aria-label="Run dispatcher"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 2L3 14h7l-1 8 10-12h-7l1-8z"/></svg></button>
         </div>
@@ -908,6 +937,7 @@
             <div class="hermes-action-grid">
               <button class="settings-action-btn" id="btnDownload" title="Download as Markdown" data-i18n-title="download_transcript"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> <span data-i18n="transcript">Transcript</span></button>
               <button class="settings-action-btn" id="btnExportJSON" title="Export full session as JSON" data-i18n-title="export_session_json_tooltip"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H7a2 2 0 0 0-2 2v5a2 2 0 0 1-2 2 2 2 0 0 1 2 2v5c0 1.1.9 2 2 2h1"/><path d="M16 3h1a2 2 0 0 1 2 2v5a2 2 0 0 0 2 2 2 2 0 0 0-2 2v5a2 2 0 0 1-2 2h-1"/></svg> <span data-i18n="export_session_json">JSON</span></button>
+              <button class="settings-action-btn" id="btnExportHTML" title="Export as a self-contained HTML page" data-i18n-title="export_session_html_tooltip"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M9 13l-2 2 2 2"/><path d="M15 13l2 2-2 2"/></svg> <span data-i18n="export_session_html">HTML</span></button>
               <button class="settings-action-btn" id="btnImportJSON" title="Import session from JSON" data-i18n-title="import_session_json_tooltip"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg> <span data-i18n="import">Import</span></button>
               <button class="settings-action-btn danger" id="btnClearConvModal" onclick="clearConversation()" title="Clear all messages in this conversation" data-i18n-title="clear_conversation_btn_tooltip"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 1 2 2 2v2"/></svg> <span data-i18n="clear">Clear</span></button>
             </div>
@@ -1033,6 +1063,47 @@
             </div>
             <div class="settings-field" style="margin-top:8px">
               <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+                <input type="checkbox" id="settingsRenderUserMarkdown" style="width:15px;height:15px;accent-color:var(--accent)">
+                <span data-i18n="settings_label_render_user_markdown">Render markdown in user messages</span>
+              </label>
+              <div style="font-size:11px;color:var(--muted);margin-top:4px" data-i18n="settings_desc_render_user_markdown">When enabled, bold, italic, links, and other markdown in your own messages are rendered. Off by default; fenced code blocks and math always render regardless of this setting.</div>
+            </div>
+            <div class="settings-field" style="margin-top:8px">
+              <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+                <input type="checkbox" id="settingsLargeTextPasteAsAttachment" style="width:15px;height:15px;accent-color:var(--accent)">
+                <span data-i18n="settings_label_large_text_paste_as_attachment">Attach large pasted text as file</span>
+              </label>
+              <div style="font-size:11px;color:var(--muted);margin-top:4px" data-i18n="settings_desc_large_text_paste_as_attachment">When enabled, long pasted text becomes a .md attachment instead of filling the composer.</div>
+            </div>
+            <div class="settings-field" style="margin-top:8px">
+              <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+                <input type="checkbox" id="settingsProjectQuickCreate" style="width:15px;height:15px;accent-color:var(--accent)">
+                <span data-i18n="settings_label_project_quick_create">Show per-project new-conversation buttons</span>
+              </label>
+              <div style="font-size:11px;color:var(--muted);margin-top:4px" data-i18n="settings_desc_project_quick_create">When enabled, each project chip in the sidebar gets a + button to start a conversation in that project.</div>
+            </div>
+            <div class="settings-field" style="margin-top:8px">
+              <label for="settingsStructuredCodeMode" data-i18n="settings_label_structured_code">JSON/YAML code blocks</label>
+              <select id="settingsStructuredCodeMode" style="width:100%;padding:8px;background:var(--code-bg);color:var(--text);border:1px solid var(--border2);border-radius:6px">
+                <option value="auto" data-i18n="settings_option_structured_code_auto">Auto: Tree for long blocks</option>
+                <option value="on" data-i18n="settings_option_structured_code_on">Tree by default</option>
+                <option value="off" data-i18n="settings_option_structured_code_off">Raw by default</option>
+              </select>
+              <div style="margin-top:8px">
+                <label for="settingsStructuredCodeAutoLines" data-i18n="settings_label_structured_code_auto_lines">Auto threshold lines</label>
+                <input type="number" id="settingsStructuredCodeAutoLines" min="1" max="1000" step="1" inputmode="numeric" style="width:100%;padding:8px;background:var(--code-bg);color:var(--text);border:1px solid var(--border2);border-radius:6px;font-size:13px">
+              </div>
+              <div style="font-size:11px;color:var(--muted);margin-top:4px" data-i18n="settings_desc_structured_code">When Auto is selected, JSON/YAML blocks with at least this many lines open in Tree view. Tree always opens the structured viewer; Raw keeps the syntax-highlighted text. You can still switch Tree/Raw on each block.</div>
+            </div>
+            <div class="settings-field" style="margin-top:8px">
+              <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+                <input type="checkbox" id="settingsShowTitlebarProfile" style="width:15px;height:15px;accent-color:var(--accent)">
+                <span data-i18n="settings_label_show_titlebar_profile">Show profile switcher in titlebar</span>
+              </label>
+              <div style="font-size:11px;color:var(--muted);margin-top:4px" data-i18n="settings_desc_show_titlebar_profile">When enabled, a profile switcher button appears in the top-left app titlebar so you can change profiles from any tab. Off by default; the composer footer always has a profile switcher regardless of this setting.</div>
+            </div>
+            <div class="settings-field" style="margin-top:8px">
+              <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
                 <input type="checkbox" id="settingsWorklogDetailsExpandedDefault" style="width:15px;height:15px;accent-color:var(--accent)">
                 <span data-i18n="settings_label_worklog_details_expanded_default">Open Worklog details automatically</span>
               </label>
@@ -1042,6 +1113,16 @@
               <label id="tabVisibilityLabel" data-i18n="settings_label_tab_visibility">Sidebar tabs</label>
               <div id="tabVisibilityChips" class="tab-visibility-chips" role="group" aria-labelledby="tabVisibilityLabel"></div>
               <div style="font-size:11px;color:var(--muted);margin-top:4px" data-i18n="settings_desc_tab_visibility">Choose which tabs appear in the sidebar and rail. Drag chips to reorder them. Chat and Settings are always visible.</div>
+            </div>
+            <div class="settings-field">
+              <label id="composerControlsLabel" data-i18n="settings_label_composer_controls">Chat footer controls</label>
+              <div id="composerControlsChips" class="tab-visibility-chips" role="group" aria-labelledby="composerControlsLabel"></div>
+              <div style="font-size:11px;color:var(--muted);margin-top:4px" data-i18n="settings_desc_composer_controls">Toggle which controls are shown in the chat footer. Drag chips to reorder each footer group.</div>
+            </div>
+            <div class="settings-field">
+              <label id="composerSituationalControlsLabel" data-i18n="settings_label_composer_situational_controls">Situational footer controls</label>
+              <div id="composerSituationalControlsChips" class="tab-visibility-chips" role="group" aria-labelledby="composerSituationalControlsLabel"></div>
+              <div style="font-size:11px;color:var(--muted);margin-top:4px" data-i18n="settings_desc_composer_situational_controls">These controls do not always appear, depending on viewport, mode, or runtime state. You can still toggle them off if needed.</div>
             </div>
             <div id="settingsAppearanceAutosaveStatus" class="settings-autosave-status" aria-live="polite"></div>
           </div>
@@ -1053,10 +1134,12 @@
               </div>
             </div>
             <div class="settings-field">
-              <label for="settingsModel" data-i18n="settings_label_model">Default Model</label>
+              <label for="settingsModelChip" data-i18n="settings_label_model">Default Model</label>
               <div class="model-advanced-row">
+                <button type="button" id="settingsModelChip" class="settings-model-chip" aria-haspopup="listbox" aria-expanded="false">Default Model</button>
                 <select id="settingsModel" style="width:100%;padding:8px;background:var(--code-bg);color:var(--text);border:1px solid var(--border2);border-radius:6px"></select>
                 <button type="button" id="mainAdvancedBtn" class="model-advanced-btn" title="Advanced options" aria-label="Advanced options for main model"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
+                <div class="model-dropdown settings-model-dropdown" id="settingsModelDropdown"></div>
               </div>
               <div style="font-size:11px;color:var(--muted);margin-top:4px" data-i18n="settings_desc_model">Used for new conversations. Existing conversations keep their selected model.</div>
             </div>
@@ -1088,6 +1171,7 @@
               <select id="settingsSendKey" style="width:100%;padding:8px;background:var(--code-bg);color:var(--text);border:1px solid var(--border2);border-radius:6px">
                 <option value="enter">Enter (Shift+Enter for newline)</option>
                 <option value="ctrl+enter">Ctrl+Enter (Enter for newline)</option>
+                <option value="shift+enter">Shift+Enter (Enter for newline)</option>
               </select>
             </div>
             <div class="settings-field">
@@ -1137,7 +1221,7 @@
               <div style="font-size:11px;color:var(--muted);margin-top:4px" data-i18n="settings_desc_raw_audio">Record and send the original audio file to the agent instead of converting it to text first. The agent can then transcribe it or process the raw audio (emotion, background noise, custom STT). Like Telegram's voice message behavior.</div>
             </div>
             <div class="settings-field">
-              <label for="settingsTtsEngine" data-i18n="settings_label_tts_engine">TTS Engine</label><select id="settingsTtsEngine" style="width:100%;padding:8px;background:var(--code-bg);color:var(--text);border:1px solid var(--border2);border-radius:6px"><option value="browser">Browser speech synthesis</option><option value="edge">Edge TTS (server)</option><option value="elevenlabs">ElevenLabs (server)</option></select><div style="font-size:11px;color:var(--muted);margin-top:4px" data-i18n="settings_desc_tts_engine">Choose speech engine. Edge TTS uses Microsoft neural voices via the server.</div></div><div class="settings-field"><label for="settingsTtsVoice" data-i18n="settings_label_tts_voice">Voice</label>
+              <label for="settingsTtsEngine" data-i18n="settings_label_tts_engine">TTS Engine</label><select id="settingsTtsEngine" style="width:100%;padding:8px;background:var(--code-bg);color:var(--text);border:1px solid var(--border2);border-radius:6px"><option value="browser">Browser speech synthesis</option><option value="edge">Edge TTS (server)</option><option value="elevenlabs">ElevenLabs (server)</option><option value="openai">OpenAI TTS (server)</option></select><div style="font-size:11px;color:var(--muted);margin-top:4px" data-i18n="settings_desc_tts_engine">Choose speech engine. Edge TTS uses Microsoft neural voices via the server.</div></div><div class="settings-field"><label for="settingsTtsVoice" data-i18n="settings_label_tts_voice">Voice</label>
               <select id="settingsTtsVoice" style="width:100%;padding:8px;background:var(--code-bg);color:var(--text);border:1px solid var(--border2);border-radius:6px">
                 <option value="">Default system voice</option>
               </select>
@@ -1179,6 +1263,11 @@
               <div style="font-size:11px;color:var(--muted);margin-top:4px" data-i18n="settings_desc_token_usage">Displays input/output token count below each assistant reply. Also toggled with <code>/usage</code>.</div>
             </div>
             <div class="settings-field">
+              <label for="settingsMaxTokens" data-i18n="settings_label_max_tokens">Max output tokens</label>
+              <div style="font-size:11px;color:var(--muted);margin-bottom:6px" data-i18n="settings_desc_max_tokens">Optional hard cap for assistant output tokens. Leave blank to let streaming use the effective fallback from config.</div>
+              <input type="number" id="settingsMaxTokens" min="1" step="1" data-i18n-placeholder="settings_placeholder_max_tokens_none" placeholder="No override" style="width:100%;padding:8px;background:var(--code-bg);color:var(--text);border:1px solid var(--border2);border-radius:6px;font-size:13px">
+            </div>
+            <div class="settings-field">
               <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
                 <input type="checkbox" id="settingsShowQuotaChip" style="width:15px;height:15px;accent-color:var(--accent)">
                 <span data-i18n="settings_label_quota_chip">Show provider quota chip in composer</span>
@@ -1204,7 +1293,7 @@
                 <input type="checkbox" id="settingsFadeTextEffect" style="width:15px;height:15px;accent-color:var(--accent)">
                 <span data-i18n="settings_label_fade_text_effect">Fade text effect</span>
               </label>
-              <div style="font-size:11px;color:var(--muted);margin-top:4px" data-i18n="settings_desc_fade_text_effect">Fade newly streamed words in while the assistant is responding. Similar to OpenWebUI; off by default for maximum performance.</div>
+              <div style="font-size:11px;color:var(--muted);margin-top:4px" data-i18n="settings_desc_fade_text_effect">Fade newly streamed words in while the assistant is responding. Similar to OpenWebUI; off by default for maximum performance. Transparent Stream always fades prose as part of that mode, regardless of this setting.</div>
             </div>
             <div class="settings-field">
               <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
@@ -1243,14 +1332,21 @@
               </select>
               <div style="font-size:11px;color:var(--muted);margin-top:4px" data-i18n="settings_desc_auto_title_refresh">Automatically re-generates the session title based on the latest exchange, keeping it relevant as the conversation evolves. Requires an LLM title generation model to be configured.</div>
             </div>
-            <div class="settings-field">
-              <label for="settingsBusyInputMode" data-i18n="settings_label_busy_input_mode">Busy input mode</label>
-              <select id="settingsBusyInputMode" style="width:100%;padding:8px;background:var(--code-bg);color:var(--text);border:1px solid var(--border2);border-radius:6px">
-                <option value="queue" data-i18n="settings_busy_input_mode_queue">Queue follow-up</option>
-                <option value="interrupt" data-i18n="settings_busy_input_mode_interrupt">Interrupt current turn</option>
-                <option value="steer" data-i18n="settings_busy_input_mode_steer">Steer (mid-turn correction)</option>
+          <div class="settings-field" data-settings-search="busy input mode message default while running queue interrupt steer">
+              <label for="settingsDefaultMessageMode" data-i18n="settings_label_default_message_mode">Default message mode</label>
+              <select id="settingsDefaultMessageMode" style="width:100%;padding:8px;background:var(--code-bg);color:var(--text);border:1px solid var(--border2);border-radius:6px">
+                <option value="queue" data-i18n="settings_default_message_mode_queue">Queue follow-up</option>
+                <option value="interrupt" data-i18n="settings_default_message_mode_interrupt">Interrupt current turn</option>
+                <option value="steer" data-i18n="settings_default_message_mode_steer">Steer (mid-turn correction)</option>
               </select>
-              <div style="font-size:11px;color:var(--muted);margin-top:4px" data-i18n="settings_desc_busy_input_mode">Controls what happens when you send a message while the agent is running. Queue waits for the current task; Interrupt cancels and starts fresh; Steer injects a mid-turn correction without interrupting (falls back to interrupt when the agent is not yet cached or the stream has ended).</div>
+              <div style="font-size:11px;color:var(--muted);margin-top:4px" data-i18n="settings_desc_default_message_mode">Controls what happens when you send a message while the agent is running. Queue waits for the current task; Interrupt cancels and starts fresh; Steer injects a mid-turn correction without interrupting. If Steer is unavailable, the draft is restored so you can choose the next action.</div>
+            </div>
+            <div class="settings-field">
+              <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+                <input type="checkbox" id="settingsShowBusyPlaceholderHint" style="width:15px;height:15px;accent-color:var(--accent)">
+                <span data-i18n="settings_label_busy_placeholder_hint">Show busy placeholder hint</span>
+              </label>
+              <div style="font-size:11px;color:var(--muted);margin-top:4px" data-i18n="settings_desc_busy_placeholder_hint">Shows the composer placeholder with the current busy action while the session is running and the draft is empty.</div>
             </div>
             <div class="settings-field">
               <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
@@ -1265,6 +1361,20 @@
                 <span data-i18n="settings_label_cron_sessions">Show cron sessions</span>
               </label>
               <div style="font-size:11px;color:var(--muted);margin-top:4px" data-i18n="settings_desc_cron_sessions">Surface cron job output as conversations in the sidebar. Only active when non-WebUI sessions are enabled. Defaults off; high-frequency jobs can flood the sidebar.</div>
+            </div>
+            <div class="settings-field" id="settingsShowClaudeCodeSessionsField" style="margin-left:24px">
+              <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+                <input type="checkbox" id="settingsShowClaudeCodeSessions" style="width:15px;height:15px;accent-color:var(--accent)">
+                <span data-i18n="settings_label_claude_code_sessions">Show Claude Code sessions</span>
+              </label>
+              <div style="font-size:11px;color:var(--muted);margin-top:4px" data-i18n="settings_desc_claude_code_sessions">Show Claude Code imported sessions in the sidebar, or hide them while leaving other external sessions visible.</div>
+            </div>
+            <div class="settings-field" id="settingsShowWebhookSessionsField" style="margin-left:24px">
+              <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+                <input type="checkbox" id="settingsShowWebhookSessions" style="width:15px;height:15px;accent-color:var(--accent)">
+                <span data-i18n="settings_label_webhook_sessions">Show webhook sessions</span>
+              </label>
+              <div style="font-size:11px;color:var(--muted);margin-top:4px" data-i18n="settings_desc_webhook_sessions">Surface webhook runs as conversations in the sidebar. Only active when non-WebUI sessions are enabled. Defaults off; high-volume routes can flood the sidebar.</div>
             </div>
             <div class="settings-field">
               <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
@@ -1358,12 +1468,59 @@
               No Hermes plugins are currently visible. Install or enable plugins from the Hermes CLI/config to see them here.
             </div>
           </div>
+          <div class="settings-pane" id="settingsPaneExtensions">
+            <div class="settings-section-head">
+              <div>
+                <div class="settings-section-title" data-i18n="settings_tab_extensions">Extensions</div>
+                <div class="settings-section-meta">Browse, install, and manage WebUI extensions.</div>
+              </div>
+            </div>
+            <div class="extensions-tab-bar" role="tablist">
+              <button class="extensions-tab-btn extensions-tab-active" role="tab"
+                      data-extensions-tab="gallery"
+                      onclick="switchExtensionsTab('gallery')" type="button"
+                      data-i18n="settings_extensions_gallery_tab">Gallery</button>
+              <button class="extensions-tab-btn" role="tab"
+                      data-extensions-tab="installed"
+                      onclick="switchExtensionsTab('installed')" type="button"
+                      data-i18n="settings_extensions_installed_tab">Installed</button>
+              <button class="extensions-tab-btn" role="tab"
+                      data-extensions-tab="diagnostics"
+                      onclick="switchExtensionsTab('diagnostics')" type="button"
+                      data-i18n="settings_extensions_diagnostics_tab">Diagnostics</button>
+            </div>
+            <div data-extensions-pane="gallery">
+              <div id="extensionsGallery" class="extensions-gallery" aria-live="polite">
+                <div class="extensions-loading" data-i18n="settings_extensions_gallery_loading">Loading gallery…</div>
+              </div>
+            </div>
+            <div data-extensions-pane="installed" hidden>
+              <div id="extensionsInstalled" class="extensions-gallery" aria-live="polite">
+                <div class="extensions-loading">Loading installed extensions…</div>
+              </div>
+            </div>
+            <div data-extensions-pane="diagnostics" hidden>
+              <div class="settings-section-head" style="padding-top:8px">
+                <div></div>
+                <button class="sm-btn extensions-copy-diagnostics-btn" id="extensionsCopyDiagnosticsBtn" type="button" onclick="copyExtensionsDiagnostics()" disabled>Copy diagnostics</button>
+              </div>
+              <div class="settings-field extensions-trust-note" id="extensionsTrustModel">
+                <label>Trust model</label>
+                <div>Extensions run in the WebUI browser origin and can access the same authenticated APIs as this session. Settings and extension-owned storage are browser-local and not for secrets. Only load trusted local extension directories; disabling an extension takes effect after reload for already-injected assets.</div>
+              </div>
+              <div id="extensionsDiagnostics" class="extensions-diagnostics" aria-live="polite">
+                <div class="extensions-loading">Loading extension diagnostics…</div>
+              </div>
+            </div>
+          </div>
           <div class="settings-pane" id="settingsPaneSystem">
             <div class="settings-section-head">
               <div>
                 <div class="settings-section-title" data-i18n="settings_section_system_title">System</div>
                 <div class="settings-section-meta" data-i18n="settings_section_system_meta">Runtime status and integrations.</div>
               </div>
+
+
             </div>
             <!-- Gateway Status Section -->
             <div class="settings-field" style="margin-top:18px;padding-top:16px;border-top:1px solid var(--border)">
@@ -1462,6 +1619,7 @@
       <div class="preview-path" id="previewPath">
         <span id="previewPathText"></span>
         <span class="preview-badge" id="previewBadge"></span>
+        <button id="btnCopyPreviewRelPath" class="panel-icon-btn" style="font-size:12px;width:auto;padding:2px 8px;display:inline-flex;align-items:center;gap:4px" onclick="copyPreviewRelativePath()" title="Copy relative path" aria-label="Copy relative path" data-i18n-title="copy_relative_path" data-i18n-aria-label="copy_relative_path"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> <span class="preview-btn-label" data-i18n="copy_relative_path">Copy relative path</span></button>
         <button id="btnOpenInBrowser" class="panel-icon-btn" style="margin-left:auto;font-size:12px;width:auto;padding:2px 8px;display:none;align-items:center;gap:4px" onclick="openInBrowser()" title="Open in new browser tab"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg> <span data-i18n="open_in_browser">Open in browser</span></button>
         <button id="btnRenderMarkdownAnyway" class="panel-icon-btn" style="font-size:12px;width:auto;padding:2px 8px;display:none;align-items:center;gap:4px" onclick="forceRenderMarkdownPreview()" title="Render this large file as rich Markdown"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M16 3h3a2 2 0 0 1 2 2v3"/><path d="M8 21H5a2 2 0 0 1-2-2v-3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/><path d="M7 8h10"/><path d="M7 12h10"/><path d="M7 16h6"/></svg> Render as markdown anyway</button>
         <button id="btnDownloadFile" class="panel-icon-btn" style="margin-left:auto;font-size:12px;width:auto;padding:2px 8px;display:inline-flex;align-items:center;gap:4px" onclick="downloadFile(_previewCurrentPath)" title="Download file to your computer"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Download</button>
@@ -1503,6 +1661,7 @@
   </div>
 </div>
 <div class="mobile-overlay" id="mobileOverlay" onclick="closeMobileSidebar()"></div>
+<div class="pwa-sidebar-edge-guard" id="pwaSidebarEdgeGuard" aria-hidden="true"></div>
 <div class="app-dialog-overlay" id="appDialogOverlay" style="display:none" aria-hidden="true">
   <div class="app-dialog" id="appDialog" role="dialog" aria-modal="true" aria-labelledby="appDialogTitle" aria-describedby="appDialogDesc">
     <div class="app-dialog-header">
@@ -1529,6 +1688,7 @@
 <script src="static/sessions.js?v=__WEBUI_VERSION__" defer></script>
 <script src="static/commands.js?v=__WEBUI_VERSION__" defer></script>
 <script src="static/messages.js?v=__WEBUI_VERSION__" defer></script>
+<script src="static/extension_settings.js?v=__WEBUI_VERSION__" defer></script>
 <script src="static/panels.js?v=__WEBUI_VERSION__" defer></script>
 <script src="static/onboarding.js?v=__WEBUI_VERSION__" defer></script>
 <script src="static/boot.js?v=__WEBUI_VERSION__" defer></script>
@@ -1594,6 +1754,7 @@
       <div class="kanban-modal-row">
         <label for="kanbanTaskModalPriority" data-i18n="kanban_priority">Priority</label>
         <input type="number" id="kanbanTaskModalPriority" value="0" min="-100" max="100" step="1">
+        <div class="kanban-modal-hint" id="kanbanTaskModalPriorityHint" data-i18n="kanban_priority_hint">Higher numbers run first. Default 0.</div>
       </div>
     </div>
     <div class="kanban-modal-row">
@@ -1607,6 +1768,33 @@
       <label for="kanbanTaskModalTenant" data-i18n="kanban_tenant">Tenant</label>
       <input type="text" id="kanbanTaskModalTenant" list="kanbanTaskModalTenantList" maxlength="64" autocomplete="off" data-i18n-placeholder="kanban_tenant_placeholder" placeholder="Optional — project or team slug">
       <datalist id="kanbanTaskModalTenantList"></datalist>
+    </div>
+    <div class="kanban-modal-row">
+      <label for="kanbanTaskModalWorkspaceKind" data-i18n="kanban_workspace_kind">Workspace kind</label>
+      <select id="kanbanTaskModalWorkspaceKind" onchange="_kanbanOnWorkspaceKindChange()">
+        <option value="scratch" data-i18n="kanban_workspace_scratch">Scratch</option>
+        <option value="worktree" data-i18n="kanban_workspace_worktree">Worktree</option>
+        <option value="dir" data-i18n="kanban_workspace_dir">Directory</option>
+      </select>
+    </div>
+    <div class="kanban-modal-row" id="kanbanTaskModalWorkspacePathRow" style="display:none">
+      <label for="kanbanTaskModalWorkspacePath" data-i18n="kanban_workspace_path">Workspace path</label>
+      <input type="text" id="kanbanTaskModalWorkspacePath" list="kanbanTaskModalWorkspacePathList" maxlength="255" autocomplete="off" data-i18n-placeholder="kanban_workspace_path_placeholder" placeholder="Path to workspace">
+      <datalist id="kanbanTaskModalWorkspacePathList"></datalist>
+    </div>
+    <div class="kanban-modal-row">
+      <label for="kanbanTaskModalSkills" data-i18n="kanban_skills">Skills</label>
+      <input type="text" id="kanbanTaskModalSkills" maxlength="255" autocomplete="off" data-i18n-placeholder="kanban_skills_placeholder" placeholder="Comma-separated skill names, e.g. python,git">
+    </div>
+    <div class="kanban-modal-row">
+      <label for="kanbanTaskModalMaxRuntimeSeconds" data-i18n="kanban_max_runtime_seconds">Max runtime (seconds)</label>
+      <input type="number" id="kanbanTaskModalMaxRuntimeSeconds" min="1" step="1" autocomplete="off">
+      <div class="kanban-modal-hint" data-i18n="kanban_max_runtime_hint">Leave empty for unlimited.</div>
+    </div>
+    <div class="kanban-modal-row">
+      <label for="kanbanTaskModalParents" data-i18n="kanban_parents_modal">Parent dependencies</label>
+      <input type="text" id="kanbanTaskModalParents" list="kanbanTaskModalParentsList" maxlength="255" autocomplete="off" data-i18n-placeholder="kanban_parents_placeholder" placeholder="Parent task ID">
+      <datalist id="kanbanTaskModalParentsList"></datalist>
     </div>
     <div class="kanban-modal-error" id="kanbanTaskModalError" aria-live="polite"></div>
     <div class="kanban-modal-actions">
@@ -1625,5 +1813,6 @@
   </div>
   <div id="outlinePanel"></div>
 </div>
+<div class="profile-dropdown" id="profileDropdown"></div>
 </body>
 </html>

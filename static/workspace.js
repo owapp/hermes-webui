@@ -4,6 +4,7 @@ async function api(path,opts={}){
   const url=new URL(rel,document.baseURI||location.href);
   const timeoutMs=Object.prototype.hasOwnProperty.call(opts,'timeoutMs')?opts.timeoutMs:30000;
   const timeoutToast=opts.timeoutToast!==false;
+  const redirect401=opts.redirect401!==false;
   const maxAttempts=Object.prototype.hasOwnProperty.call(opts,'retries')?Math.max(0,Number(opts.retries)||0)+1:3;
   const retryTimeouts=opts.retryTimeouts===true;
   const retryStatuses=Array.isArray(opts.retryStatuses)?opts.retryStatuses.map(Number).filter(Number.isFinite):[];
@@ -21,6 +22,7 @@ async function api(path,opts={}){
       const fetchOpts={...opts};
       delete fetchOpts.timeoutMs;
       delete fetchOpts.timeoutToast;
+      delete fetchOpts.redirect401;
       delete fetchOpts.retries;
       delete fetchOpts.retryTimeouts;
       delete fetchOpts.retryStatuses;
@@ -43,7 +45,25 @@ async function api(path,opts={}){
           // 401 means the auth session expired. Redirect to login so the user can
           // re-authenticate. This is especially important for iOS PWA (standalone mode)
           // and for subpath mounts like /hermes/, where /login escapes to the site root.
-          if(res.status===401){window.location.href='login?next='+encodeURIComponent(window.location.pathname+window.location.search);return;}
+          if(res.status===401){
+            // #5578: if we're ALREADY on the login page, appending
+            // window.location.pathname+search (which contains ?next=…) into a
+            // fresh next= wraps the login URL into itself and re-encodes it —
+            // exponential URL growth on each expired-auth bounce until the tab
+            // breaks. On the login page, just reload login WITHOUT a next (the
+            // page preserves its own inner next); elsewhere, capture the path.
+            if(redirect401){
+              // Already on the login page? Reload login WITHOUT a next.
+              const _p=(window.location.pathname||'').replace(/\/+$/,'');
+              if(/(?:^|\/)login$/.test(_p)){
+                window.location.href='login';
+              }else{
+                window.location.href='login?next='+encodeURIComponent(window.location.pathname+window.location.search);
+              }
+            }
+            // Callers can opt out of navigation and handle the unauthenticated state themselves.
+            return;
+          }
           const text=await res.text();
           // Parse JSON error body and surface the human-readable message,
           // rather than showing raw JSON like {"error":"Profile 'x' does not exist."}
@@ -138,8 +158,152 @@ function _restoreExpandedDirs(){
   }catch(e){S._expandedDirs=new Set();}
 }
 
+function _escapeGrantStore(){
+  if(!S._escapeGrants) S._escapeGrants = Object.create(null);
+  return S._escapeGrants;
+}
+
+function _normalizeWorkspaceRelPath(path){
+  let raw = String(path || '').trim().replace(/\\/g, '/');
+  if(!raw || raw === '.') return '.';
+  if(raw.startsWith('/')) return '';
+  const parts = [];
+  for(const part of raw.split('/')){
+    if(!part || part === '.') continue;
+    if(part === '..'){
+      if(parts.length) parts.pop();
+      else return '';
+      continue;
+    }
+    parts.push(part);
+  }
+  return parts.length ? parts.join('/') : '.';
+}
+
+function _isSameOrChildPath(base, path){
+  const normalizedBase = _normalizeWorkspaceRelPath(base);
+  const normalizedPath = _normalizeWorkspaceRelPath(path);
+  if(!normalizedBase || !normalizedPath) return false;
+  if(normalizedBase === '.') return true;
+  return normalizedPath === normalizedBase || normalizedPath.startsWith(`${normalizedBase}/`);
+}
+
+function _workspaceEscapeGrantForPath(path){
+  const grants = _escapeGrantStore();
+  const normalizedPath = _normalizeWorkspaceRelPath(path);
+  if(!normalizedPath || !S.session || !S.session.session_id) return null;
+  const sessionId = S.session.session_id;
+  let best = null;
+  for(const root of Object.keys(grants)){
+    const grant = grants[root];
+    if(!grant || grant.sessionId !== sessionId) continue;
+    if(grant.expiresAt && Date.now() >= grant.expiresAt){
+      delete grants[root];
+      continue;
+    }
+    if(!_isSameOrChildPath(root, normalizedPath)) continue;
+    if(!best || root.length > best.root.length) best = {root, grant};
+  }
+  return best ? best.grant : null;
+}
+
+function _workspaceEscapeExactGrant(path){
+  const normalizedPath = _normalizeWorkspaceRelPath(path);
+  const grant = _workspaceEscapeGrantForPath(normalizedPath);
+  if(!grant) return null;
+  return grant.path === normalizedPath ? grant : null;
+}
+
+function _storeWorkspaceEscapeGrant(data){
+  if(!S.session || !data || !data.token) return null;
+  const grants = _escapeGrantStore();
+  const root = _normalizeWorkspaceRelPath(data.path || '');
+  if(!root) return null;
+  const grant = {
+    sessionId: S.session.session_id,
+    path: root,
+    token: String(data.token),
+    expiresAt: Number(data.expires_at || 0) * 1000,
+    isDir: !!data.is_dir,
+  };
+  grants[root] = grant;
+  return grant;
+}
+
+function _clearWorkspaceEscapeGrant(path){
+  const grants = S._escapeGrants;
+  if(!grants) return;
+  const root = _normalizeWorkspaceRelPath(path);
+  if(root && grants[root]) delete grants[root];
+}
+
+function _workspacePathIsReadOnly(path){
+  return !!_workspaceEscapeGrantForPath(path || S.currentDir || '.');
+}
+
+function _workspaceRouteForPath(path, kind, opts={}){
+  if(!S.session) return '';
+  const normalizedPath = _normalizeWorkspaceRelPath(path);
+  const grant = _workspaceEscapeGrantForPath(normalizedPath);
+  const sessionId = encodeURIComponent(S.session.session_id);
+  const params = new URLSearchParams({session_id:S.session.session_id, path:normalizedPath || '.'});
+  if(grant){
+    params.set('token', grant.token);
+    if(kind === 'raw' && opts.download) params.set('download', '1');
+    if(kind === 'raw' && opts.inline) params.set('inline', '1');
+    if(kind === 'list') return `/api/escape/list?${params.toString()}`;
+    if(kind === 'read') return `/api/escape/file/read?${params.toString()}`;
+    if(kind === 'raw') return `/api/escape/file/raw?${params.toString()}`;
+  }
+  if(kind === 'list') return `/api/list?session_id=${sessionId}&path=${encodeURIComponent(normalizedPath || '.')}`;
+  if(kind === 'read') return `/api/file?session_id=${sessionId}&path=${encodeURIComponent(normalizedPath || '.')}`;
+  if(kind === 'raw'){
+    const extra = [];
+    if(opts.download) extra.push('download=1');
+    // Inline previews intentionally preserve a literal &inline=1 marker in this file.
+    if(opts.inline) extra.push('inline=1');
+    const suffix = extra.length ? `&${extra.join('&')}` : '';
+    return `/api/file/raw?session_id=${sessionId}&path=${encodeURIComponent(normalizedPath || '.')}${suffix}`;
+  }
+  return '';
+}
+
+async function authorizeWorkspaceEscapeNavigation(item){
+  if(!S.session || !item || !item.path) return null;
+  const normalizedPath = _normalizeWorkspaceRelPath(item.path);
+  const exactGrant = _workspaceEscapeExactGrant(normalizedPath);
+  if(!exactGrant){
+    const ok = await showConfirmDialog({
+      title: item.name || normalizedPath,
+      message: t('external_link_open_confirm'),
+      confirmLabel: t('dialog_confirm_btn'),
+      danger: false,
+      hideCancel: true,
+      focusCancel: false,
+    });
+    if(!ok) return null;
+  }
+  try{
+    const data = await api('/api/escape/authorize', {
+      method: 'POST',
+      body: JSON.stringify({
+        session_id: S.session.session_id,
+        path: normalizedPath,
+      }),
+    });
+    const grant = _storeWorkspaceEscapeGrant(data);
+    if(!grant) throw new Error('Missing escape authorization token');
+    showToast(t('external_link_read_only'), 2000);
+    return grant;
+  }catch(e){
+    showToast(t('external_link_grant_expired') || (e && e.message ? e.message : String(e)), 5000, 'error');
+    return null;
+  }
+}
+
 let _workspacePanelActiveTab = 'files';
 let _renderSessionArtifactsTimer = null;
+let _workspaceTodosLastRenderedHash = null;
 
 function _setWorkspacePanelTabDataset(){
   const panel = document.querySelector('.rightpanel');
@@ -152,6 +316,35 @@ function scheduleRenderSessionArtifacts(){
     _renderSessionArtifactsTimer = null;
     renderSessionArtifacts();
   }, 100);
+}
+
+function _workspaceTodosHash(items){
+  if(!Array.isArray(items)) return '';
+  let h=items.length+'|';
+  for(let i=0;i<items.length;i++){
+    const t=items[i]||{};
+    h+=String(t.id==null?'':t.id)+'\x1f'+String(t.content==null?(t.text==null?'':t.text):t.content)+'\x1f'+String(t.status==null?'':t.status)+'\x1e';
+  }
+  return h;
+}
+
+function _workspaceTodosTabIsActive(){
+  if(typeof window==='undefined'||window._workspaceTodosTab!==true) return false;
+  if(typeof document==='undefined') return false;
+  const rightPanel=document.querySelector('.rightpanel');
+  if(!rightPanel||!rightPanel.dataset||rightPanel.dataset.activeTab!=='todos') return false;
+  const tab=document.getElementById('workspaceTodosTab');
+  const panel=document.getElementById('workspaceTodosPanel');
+  return !!(tab&&panel&&!tab.hidden&&!panel.hidden);
+}
+
+function _resetWorkspaceTodosRenderCache(){
+  _workspaceTodosLastRenderedHash=null;
+}
+
+function _refreshWorkspacePanelTodos(){
+  if(!_workspaceTodosTabIsActive()) return;
+  _loadWorkspacePanelTodos();
 }
 
 if(typeof document !== 'undefined'){
@@ -199,25 +392,10 @@ function _loadWorkspacePanelTodos(){
     }
   }catch(e){ todos = []; }
   if(!todos.length){
-    panel.innerHTML = '<div style="padding:24px 12px;text-align:center;color:var(--muted);font-size:12px">No active tasks</div>';
+    panel.innerHTML = renderTodoEmptyState({centered:true});
     return;
   }
-  const statusIcon = (s) => {
-    if(s === 'completed') return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>';
-    if(s === 'in_progress') return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>';
-    if(s === 'cancelled') return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
-    // pending
-    return '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/></svg>';
-  };
-  const items = todos.map(t => {
-    const s = t.status || 'pending';
-    const isDone = s === 'completed' || s === 'cancelled';
-    return `<div style="display:flex;align-items:flex-start;gap:8px;padding:6px 0;border-bottom:1px solid var(--border)">`+
-      `<span style="flex-shrink:0;margin-top:2px">${statusIcon(s)}</span>`+
-      `<span style="font-size:12px;color:${isDone?'var(--muted)':'var(--text)'};text-decoration:${s==='cancelled'?'line-through':'none'}">${_escHtml(t.content||t.text||'')}</span>`+
-      `</div>`;
-  }).join('');
-  panel.innerHTML = `<div style="padding:4px 0">${items}</div>`;
+  panel.innerHTML = renderTodoRows(todos, {metadata:true});
 }
 
 function _escHtml(s){
@@ -428,19 +606,101 @@ async function openArtifactPath(path){
   openFile(rel);
 }
 
+// ── Workspace file-tree loading skeleton (#4662 Phase 1) ────────────────────
+// During a profile switch the right-hand workspace panel would otherwise keep
+// showing the previous profile's file tree until /api/list resolves. Show a
+// clean tree-shaped skeleton in its place (panel stays open — hiding it is
+// jarring). Varied bar widths + a small indent pattern so it reads as a real
+// directory listing rather than a mechanical repeat.
+const _WS_SKELETON_ROWS = [
+  {w: 38, indent: 0, dir: true},
+  {w: 72, indent: 0},
+  {w: 44, indent: 1},
+  {w: 63, indent: 1},
+  {w: 80, indent: 0},
+  {w: 51, indent: 1},
+  {w: 67, indent: 0},
+  {w: 39, indent: 1},
+];
+
+// Workspace-tree render generation. loadDir() captures this at call time and
+// discards its render/cache writes if a newer generation started meanwhile.
+// #4671 CORE: an empty-session profile switch REUSES the same session_id, so
+// loadDir()'s session_id guard alone can't reject a pre-switch /api/list response
+// that resolves after the new profile's loadDir('.') — it would paint the previous
+// workspace's files over the switched-to profile. switchToProfile() bumps this
+// UNCONDITIONALLY at switch start (even when the workspace panel is closed, since
+// loadDir('.') still runs then), so the stale response is rejected.
+let _wsTreeGen = 0;
+function bumpWorkspaceTreeGen(){
+  _wsTreeGen = (typeof _wsTreeGen === 'number' ? _wsTreeGen : 0) + 1;
+  return _wsTreeGen;
+}
+if(typeof window!=='undefined') window.bumpWorkspaceTreeGen = bumpWorkspaceTreeGen;
+
+function showWorkspaceTreeSkeleton(){
+  const tree = $('fileTree');
+  if(!tree) return;
+  const wrap = document.createElement('div');
+  wrap.className = 'skeleton-tree';
+  wrap.setAttribute('aria-hidden', 'true');
+  for(const spec of _WS_SKELETON_ROWS){
+    const row = document.createElement('div');
+    row.className = 'skeleton-tree-row';
+    if(spec.indent) row.style.paddingLeft = (2 + spec.indent * 16) + 'px';
+    const glyph = document.createElement('div');
+    glyph.className = 'skeleton-glyph';
+    const name = document.createElement('div');
+    name.className = 'skeleton-bar skeleton-name';
+    name.style.width = spec.w + '%';
+    row.appendChild(glyph);
+    row.appendChild(name);
+    // Files (not dirs) show a size on the right; mirror that on leaf rows.
+    if(!spec.dir){
+      const size = document.createElement('div');
+      size.className = 'skeleton-bar skeleton-size';
+      row.appendChild(size);
+    }
+    wrap.appendChild(row);
+  }
+  tree.innerHTML = '';
+  tree.appendChild(wrap);
+  tree.style.display = '';
+}
+
+// Clear a stranded workspace-tree skeleton (#4662 Opus gate). showWorkspaceTreeSkeleton()
+// is shown up front on a profile switch, but the real loadDir('.') that would
+// replace it is skipped when the new profile has no bound workspace — leaving a
+// shimmering skeleton forever. Call this on the no-workspace path so the tree
+// empties instead. Only touches #fileTree when it still holds a skeleton, so
+// it can't clobber a real render.
+function clearWorkspaceTreeSkeleton(){
+  const tree = $('fileTree');
+  if(!tree) return;
+  if(tree.querySelector('.skeleton-tree')) tree.innerHTML = '';
+}
+
 async function loadDir(path, opts={}){
   const preservePreview=!!(opts&&opts.preservePreview);
   const refreshExpanded=!!(opts&&opts.refreshExpanded);
   if(!S.session)return;
   const sessionId=S.session.session_id;
+  const treeGen=_wsTreeGen;  // #4671: capture the workspace-tree generation. A profile
+                             // switch bumps it (bumpWorkspaceTreeGen), so a stale response
+                             // from the previous workspace — which would pass the session_id
+                             // guard because an empty-session switch reuses the same id — is
+                             // rejected here instead of painting the wrong profile's files.
   try{
     if(!path||path==='.'||refreshExpanded){
       S._dirCache={};
       _restoreExpandedDirs();  // restore per-workspace expanded state after root and refresh resets
     }
     S.currentDir=path||'.';
-    const data=await api(`/api/list?session_id=${encodeURIComponent(sessionId)}&path=${encodeURIComponent(path)}`);
-    if(!S.session||S.session.session_id!==sessionId)return;
+    const data=await api(
+      _workspaceRouteForPath(path, 'list') ||
+      `/api/list?session_id=${encodeURIComponent(sessionId)}&path=${encodeURIComponent(path||'.')}`
+    );
+    if(!S.session||S.session.session_id!==sessionId||treeGen!==_wsTreeGen)return;
     S.entries=data.entries||[];renderBreadcrumb();renderFileTree();
     // #2673 — refresh Artifacts tab when its source data (the file tree) updates.
     if(typeof renderSessionArtifacts==='function') renderSessionArtifacts();
@@ -451,11 +711,11 @@ async function loadDir(path, opts={}){
       const pending=[...expanded].filter(dirPath=>!S._dirCache[dirPath]);
       if(pending.length){
         const results=await Promise.all(pending.map(dirPath=>
-          api(`/api/list?session_id=${encodeURIComponent(sessionId)}&path=${encodeURIComponent(dirPath)}`)
+          api(_workspaceRouteForPath(dirPath, 'list'))
             .then(dc=>({dirPath,entries:dc.entries||[]}))
             .catch(()=>({dirPath,entries:[]}))
         ));
-        if(!S.session||S.session.session_id!==sessionId)return;
+        if(!S.session||S.session.session_id!==sessionId||treeGen!==_wsTreeGen)return;
         for(const {dirPath,entries} of results) S._dirCache[dirPath]=entries;
       }
       if(expanded.size>0)renderFileTree();
@@ -471,7 +731,15 @@ async function loadDir(path, opts={}){
     }
     // Fetch git info for workspace root (non-blocking)
     if(!path||path==='.') _refreshGitBadge();
-  }catch(e){console.warn('loadDir',e);}
+  }catch(e){
+    const grant = _workspaceEscapeGrantForPath(path);
+    if(grant && e && e.status===403){
+      _clearWorkspaceEscapeGrant(grant.path);
+      showToast(t('external_link_grant_expired') || t('file_open_failed'), 5000, 'error');
+      return;
+    }
+    console.warn('loadDir',e);
+  }
 }
 
 function refreshWorkspacePanel(){
@@ -524,7 +792,7 @@ const MD_PREVIEW_RICH_RENDER_MAX_BYTES = 256 * 1024;
 const MD_PREVIEW_RICH_RENDER_MAX_LINES = 5000;
 // Binary formats that should download rather than preview
 const DOWNLOAD_EXTS = new Set([
-  '.docx','.doc','.xlsx','.xls','.pptx','.ppt','.odt','.ods','.odp',
+  '.doc','.xls','.ppt','.odt','.ods','.odp',
   '.zip','.tar','.gz','.bz2','.7z','.rar',
   '.exe','.dmg','.pkg','.deb','.rpm',
   '.woff','.woff2','.ttf','.otf','.eot',
@@ -628,6 +896,10 @@ function forceRenderMarkdownPreview(){
 let _previewCurrentPath = '';  // relative path of currently previewed file
 let _previewCurrentMode = '';  // 'code' | 'csv' | 'md' | 'image' | 'html' | 'pdf' | 'audio' | 'video'
 let _previewDirty = false;     // true when edits are unsaved
+let _previewServerEditable = null;  // backend editability metadata when available
+let _previewSaveRoute = '/api/file/save';  // current save adapter for the open preview
+let _previewOfficeFormat = '';  // current claimed Office format, if any
+let _previewPreviewKind = '';  // preview family returned by the backend
 
 function showPreview(mode){
   // mode: 'code' | 'csv' | 'image' | 'md' | 'html' | 'pdf' | 'audio' | 'video'
@@ -653,7 +925,10 @@ function showPreview(mode){
 function updateEditBtn(){
   const btn=$('btnEditFile');
   if(!btn)return;
-  const editable = _previewCurrentMode==='code'||_previewCurrentMode==='md'||_previewCurrentMode==='csv';
+  const editable = !_workspacePathIsReadOnly(_previewCurrentPath)
+    && (_previewServerEditable===null
+      ? (_previewCurrentMode==='code'||_previewCurrentMode==='md'||_previewCurrentMode==='csv')
+      : !!_previewServerEditable);
   btn.style.display = editable?'':'none';
   const editing = $('previewEditArea').style.display!=='none';
   btn.innerHTML = editing ? `&#128190; ${t('save')}` : `&#9998; ${t('edit')}`;
@@ -664,23 +939,38 @@ function updateEditBtn(){
 
 async function toggleEditMode(){
   const editing = $('previewEditArea').style.display!=='none';
+  if(_workspacePathIsReadOnly(_previewCurrentPath)){
+    showToast(t('external_link_read_only'), 2000);
+    return;
+  }
+  if(!editing && _previewServerEditable===false){
+    showToast('This Office document is preview-only.', 3000, 'error');
+    return;
+  }
   if(editing){
     // Save
     if(!S.session||!_previewCurrentPath)return;
     const content=$('previewEditArea').value;
     try{
-      await api('/api/file/save',{method:'POST',body:JSON.stringify({
+      const saved=await api(_previewSaveRoute||'/api/file/save',{method:'POST',body:JSON.stringify({
         session_id:S.session.session_id, path:_previewCurrentPath, content
       })});
+      const savedContent=saved&&typeof saved.content==='string'?saved.content:content;
+      if(saved && typeof saved.editable==='boolean') _previewServerEditable = saved.editable;
+      if(saved && saved.preview_kind) _previewPreviewKind = saved.preview_kind;
+      if(saved && saved.office_format) _previewOfficeFormat = saved.office_format;
+      if(saved && saved.preview_kind==='office' && saved.office_format==='docx'){
+        _previewSaveRoute = '/api/file/office-save';
+      }
       _previewDirty=false;
       // Update read-only views AND the cached raw content so a later
       // "Render as markdown anyway" force-render reflects the just-saved text
       // (not the stale pre-edit fetch). #3378 review (Codex).
-      _previewRawContent = content;
+      _previewRawContent = savedContent;
       _previewRawContentPath = _previewCurrentPath;
-      if(_previewCurrentMode==='code') $('previewCode').textContent=content;
-      else if(_previewCurrentMode==='csv') renderCsvPreviewContent(_previewCurrentPath, content);
-      else renderMarkdownPreviewContent({content});
+      if(_previewCurrentMode==='code') $('previewCode').textContent=savedContent;
+      else if(_previewCurrentMode==='csv') renderCsvPreviewContent(_previewCurrentPath, savedContent);
+      else renderMarkdownPreviewContent({content:savedContent});
       $('previewEditArea').style.display='none';
       if(_previewCurrentMode==='code') $('previewCode').style.display='';
       else $('previewMd').style.display='';
@@ -763,6 +1053,11 @@ async function openFile(path, opts={}){
     return;
   }
 
+  _previewServerEditable = null;
+  _previewSaveRoute = '/api/file/save';
+  _previewOfficeFormat = '';
+  _previewPreviewKind = '';
+
   $('previewPathText').textContent=path;
   $('previewArea').classList.add('visible');
   $('fileTree').style.display='none';
@@ -772,14 +1067,14 @@ async function openFile(path, opts={}){
   if(IMAGE_EXTS.has(ext)){
     // Image: load via raw endpoint, show as <img>
     showPreview('image');
-    const url=`api/file/raw?session_id=${encodeURIComponent(S.session.session_id)}&path=${encodeURIComponent(path)}${cacheBust}`;
+    const url=_workspaceRouteForPath(path, 'raw') + cacheBust;
     $('previewImg').alt=path;
     $('previewImg').src=url;
     $('previewImg').onerror=()=>setStatus(t('image_load_failed'));
   } else if(AUDIO_EXTS.has(ext)||VIDEO_EXTS.has(ext)){
     const mode=VIDEO_EXTS.has(ext)?'video':'audio';
     showPreview(mode);
-    const url=`api/file/raw?session_id=${encodeURIComponent(S.session.session_id)}&path=${encodeURIComponent(path)}&inline=1${cacheBust}`;
+    const url=_workspaceRouteForPath(path, 'raw', {inline:true}) + cacheBust;
     const wrap=$('previewMediaWrap');
     if(wrap){
       wrap.innerHTML=(typeof _mediaPlayerHtml==='function')
@@ -789,7 +1084,7 @@ async function openFile(path, opts={}){
     }
   } else if(PDF_EXTS.has(ext)){
     showPreview('pdf');
-    const url=`api/file/raw?session_id=${encodeURIComponent(S.session.session_id)}&path=${encodeURIComponent(path)}&inline=1${cacheBust}`;
+    const url=_workspaceRouteForPath(path, 'raw', {inline:true}) + cacheBust;
     const frame=$('previewPdfFrame');
     if(frame){
       frame.src=''; // clear first to avoid stale content
@@ -806,7 +1101,7 @@ async function openFile(path, opts={}){
       // file switch could re-render the previous file's cached content.
       const data=forceRichMarkdown&&path===_previewRawContentPath&&_previewRawContent
         ? {content:_previewRawContent}
-        : await api(`/api/file?session_id=${encodeURIComponent(S.session.session_id)}&path=${encodeURIComponent(path)}`);
+        : await api(_workspaceRouteForPath(path, 'read'));
       _previewRawContent = data.content;
       _previewRawContentPath = path;
       if(!forceRichMarkdown && shouldRenderMarkdownPreviewAsPlainText(data.content)){
@@ -828,7 +1123,7 @@ async function openFile(path, opts={}){
     // or reading other origin data. If a stricter mode is needed, remove
     // allow-scripts (or add sandbox="") to disable all JS execution.
     showPreview('html');
-    const url=`api/file/raw?session_id=${encodeURIComponent(S.session.session_id)}&path=${encodeURIComponent(path)}&inline=1${cacheBust}`;
+    const url=_workspaceRouteForPath(path, 'raw', {inline:true}) + cacheBust;
     const iframe=$('previewHtmlIframe');
     if(iframe){
       iframe.src=''; // clear first to avoid stale content
@@ -836,7 +1131,7 @@ async function openFile(path, opts={}){
     }
   } else if(ext==='.csv'){
     try{
-      const data=await api(`/api/file?session_id=${encodeURIComponent(S.session.session_id)}&path=${encodeURIComponent(path)}`);
+      const data=await api(_workspaceRouteForPath(path, 'read'));
       if(data.binary){
         downloadFile(path);
         return;
@@ -849,14 +1144,28 @@ async function openFile(path, opts={}){
   } else {
     // Plain code / text -- but fall back to download if server signals binary
     try{
-      const data=await api(`/api/file?session_id=${encodeURIComponent(S.session.session_id)}&path=${encodeURIComponent(path)}`);
+      const data=await api(_workspaceRouteForPath(path, 'read'));
       if(data.binary){
         // Server flagged this as binary content
         downloadFile(path);
         return;
       }
+      if(data.preview_kind==='office'){
+        _previewRawContent = data.content || '';
+        _previewRawContentPath = path;
+        _previewServerEditable = typeof data.editable === 'boolean' ? data.editable : null;
+        _previewPreviewKind = data.preview_kind || '';
+        _previewOfficeFormat = data.office_format || '';
+        _previewSaveRoute = data.preview_kind==='office' ? '/api/file/office-save' : '/api/file/save';
+      }
       renderCodePreviewContent(path, data.content);
-    }catch(e){
+  }catch(e){
+      const grant = _workspaceEscapeGrantForPath(path);
+      if(grant && e && e.status===403){
+        _clearWorkspaceEscapeGrant(grant.path);
+        showToast(t('external_link_grant_expired') || t('file_open_failed'), 5000, 'error');
+        return;
+      }
       // If it's a 400/too-large error, offer download instead
       downloadFile(path);
     }
@@ -866,7 +1175,7 @@ async function openFile(path, opts={}){
 function downloadFile(path){
   if(!S.session)return;
   // Trigger browser download via the raw file endpoint with content-disposition attachment
-  const url=`api/file/raw?session_id=${encodeURIComponent(S.session.session_id)}&path=${encodeURIComponent(path)}&download=1`;
+  const url=_workspaceRouteForPath(path, 'raw', {download:true});
   const filename=path.split('/').pop();
   const a=document.createElement('a');
   a.href=url;a.download=filename;
@@ -916,12 +1225,50 @@ function renderFileBreadcrumb(filePath) {
 
 function openInBrowser(){
   if(!_previewCurrentPath||!S.session) return;
-  const url=`api/file/raw?session_id=${encodeURIComponent(S.session.session_id)}&path=${encodeURIComponent(_previewCurrentPath)}&inline=1`;
+  const url=_workspaceRouteForPath(_previewCurrentPath, 'raw', {inline:true});
   window.open(url,'_blank','noopener');
+}
+// openInBrowser keeps the helper-based raw path, which expands to an explicit &inline=1 URL.
+
+async function copyPreviewRelativePath(){
+  if(!_previewCurrentPath) return;
+  const btn=$('btnCopyPreviewRelPath');
+  if(btn&&btn.disabled) return;
+  if(btn) btn.disabled=true;
+  try{
+    const rel=_normalizeWorkspaceRelPath(_previewCurrentPath)||_previewCurrentPath;
+    if(typeof _copyTextWithFallback==='function'){
+      await _copyTextWithFallback(rel,t('path_copied'),t('path_copy_failed'));
+      return;
+    }
+    try{
+      await navigator.clipboard.writeText(rel);
+      showToast(t('path_copied'));
+    }catch(clipErr){
+      const ta=document.createElement('textarea');
+      ta.value=rel;
+      ta.style.cssText='position:fixed;left:-9999px;top:-9999px;';
+      document.body.appendChild(ta);
+      ta.select();
+      let copied=false;
+      try{copied=document.execCommand('copy');}catch(_){}
+      ta.remove();
+      if(copied) showToast(t('path_copied'));
+      else showToast(t('path_copy_failed')+(clipErr&&clipErr.message?clipErr.message:String(clipErr)));
+    }
+  }catch(err){
+    showToast(t('path_copy_failed')+(err.message||err));
+  }finally{
+    if(btn) btn.disabled=false;
+  }
 }
 
 // ── Workspace upload ──────────────────────────────────────────────────
 function triggerWorkspaceUpload() {
+  if(_workspacePathIsReadOnly(S.currentDir || '.')){
+    showToast(t('external_link_read_only'), 2000);
+    return;
+  }
   const input = $('workspaceFileInput');
   if (!input) return;
   input.value = '';
@@ -938,6 +1285,10 @@ function triggerWorkspaceUpload() {
 
 async function uploadToWorkspace(file, dir) {
   if (!S.session) return;
+  if(_workspacePathIsReadOnly(dir || '.')){
+    showToast(t('external_link_read_only'), 2000);
+    return;
+  }
   const formData = new FormData();
   formData.append('session_id', S.session.session_id);
   formData.append('path', dir || '.');
@@ -1035,6 +1386,10 @@ async function _collectOsDropUploads(dataTransfer) {
 
 async function uploadOsDropToWorkspace(dataTransfer, destDir) {
   if (!S.session || !dataTransfer) return;
+  if(_workspacePathIsReadOnly(destDir || '.')){
+    showToast(t('external_link_read_only'), 2000);
+    return;
+  }
   const uploads = await _collectOsDropUploads(dataTransfer);
   for (const { file, relDir } of uploads) {
     await uploadToWorkspace(file, _targetDirForRelDir(destDir, relDir));
@@ -1079,6 +1434,10 @@ function _bindWorkspaceOsUploadDropTarget(el, destDir) {
     e.preventDefault();
     e.stopPropagation();
     el.classList.remove('drag-over-upload');
+    if(_workspacePathIsReadOnly(destDir || '.')){
+      showToast(t('external_link_read_only'), 2000);
+      return;
+    }
     await uploadOsDropToWorkspace(e.dataTransfer, destDir);
   });
 }
@@ -1113,6 +1472,10 @@ if (typeof document !== 'undefined') {
       if (e.target.closest('.file-item[data-ws-type="dir"],.file-item[data-ws-is-dir="true"],.breadcrumb-seg')) return;
       e.preventDefault();
       e.stopPropagation();
+      if(_workspacePathIsReadOnly(S.currentDir || '.')){
+        showToast(t('external_link_read_only'), 2000);
+        return;
+      }
       await uploadOsDropToWorkspace(e.dataTransfer, S.currentDir || '.');
     });
   };

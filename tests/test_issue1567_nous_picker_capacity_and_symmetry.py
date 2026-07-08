@@ -446,9 +446,14 @@ class TestNousLiveFetchEmpty:
 
     def test_hermes_cli_unavailable_falls_back_to_static_4(self, monkeypatch, tmp_path):
         """When hermes_cli is unavailable (raises) — distinct from returning [] —
-        we DO fall back to the static 4-entry list so the picker isn't empty
-        in that degraded environment. This preserves pre-#1538 behavior for
-        test envs without hermes_cli."""
+        we DO fall back to the static list so the picker isn't empty in that
+        degraded environment. This preserves pre-#1538 behavior for test envs
+        without hermes_cli.
+
+        Note: _seed_provider_models_from_core() may have enriched the static
+        list at import time if hermes_cli was available then, so we assert the
+        original 4 curated entries are present (subset) rather than an exact
+        count (#4413)."""
         _scrub_provider_env(monkeypatch)
         _install_fake_hermes_cli(
             monkeypatch,
@@ -466,9 +471,29 @@ class TestNousLiveFetchEmpty:
                 "the curated static fallback so the picker isn't empty in "
                 "test envs that lack the agent package."
             )
-            assert len(nous_groups[0]["models"]) == 4, (
-                "Static fallback should expose the curated 4-entry list "
-                "from _PROVIDER_MODELS['nous']."
+            # Every curated @nous: entry must survive the static fallback — but
+            # when the curated list exceeds _NOUS_FEATURED_THRESHOLD (>25) the
+            # picker dropdown intentionally shows only the featured subset and
+            # stashes the rest under "extra_models" (for /model autocomplete).
+            # The invariant is "no curated entry is DROPPED", so check the full
+            # returned set (visible models + extra_models), not just the visible
+            # dropdown slice (which drifts to failure as the curated list grows
+            # past the threshold — the root cause of the pre-fix flake).
+            _nous_group = nous_groups[0]
+            nous_ids = {m["id"] for m in _nous_group.get("models", [])}
+            nous_ids |= {m["id"] for m in _nous_group.get("extra_models", [])}
+            _curated_nous_ids = {
+                m["id"] for m in config._PROVIDER_MODELS.get("nous", [])
+                if m["id"].startswith("@nous:")
+            }
+            assert _curated_nous_ids.issubset(nous_ids), (
+                f"Static fallback dropped curated @nous: entries. "
+                f"Missing {_curated_nous_ids - nous_ids} "
+                f"(visible+extra_models total {len(nous_ids)})"
+            )
+            assert len(nous_ids) >= 4, (
+                "Static fallback should expose at least the curated 4-entry "
+                "list from _PROVIDER_MODELS['nous']."
             )
         finally:
             restore()
